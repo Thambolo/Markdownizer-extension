@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-slate-950;
+}
+
+/* Custom scrollbar for the textarea */
+textarea::-webkit-scrollbar {
+  width: 8px;
+}
+textarea::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+textarea::-webkit-scrollbar-thumb {
+  background: #d1d5db; 
+  border-radius: 4px;
+}
+textarea::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af; 
+}

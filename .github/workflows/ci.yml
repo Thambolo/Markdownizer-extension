@@ -1,0 +1,40 @@
+name: Extension CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./extension
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js 20.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: 'npm'
+        cache-dependency-path: extension/package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Lint
+      run: npm run lint
+
+    - name: Test
+      run: npm run test
+
+    - name: Build
+      run: npm run build
+      env:
+        # Default to a placeholder for CI builds, or use a specific dev/staging URL
+        VITE_API_URL: http://localhost:8080
