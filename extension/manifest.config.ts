@@ -25,7 +25,7 @@ const [major, minor, patch, label = '0'] = version
 
 export default defineManifest(async (env) => ({
   manifest_version: 3,
-  name: env.mode === 'development' ? `[DEV] ${name}` : name,
+  name: env.mode === 'development' ? `[DEV] Markdownizer` : "Markdownizer",
   description,
   // up to four numbers separated by dots
   version: `${major}.${minor}.${patch}.${label}`,
