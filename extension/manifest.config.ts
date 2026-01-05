@@ -14,7 +14,7 @@ const getApiMatchPattern = () => {
   }
 };
 
-const { version, name, description } = packageJson;
+const { version, description } = packageJson;
 
 // Convert from SemVer (e.g. 0.1.0-beta.1) to Chrome version (e.g. 0.1.0.1)
 const [major, minor, patch, label = '0'] = version
