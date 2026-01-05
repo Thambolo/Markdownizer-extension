@@ -14,7 +14,7 @@ const getApiMatchPattern = () => {
   }
 };
 
-const { version, name, description } = packageJson;
+const { version, description } = packageJson;
 
 // Convert from SemVer (e.g. 0.1.0-beta.1) to Chrome version (e.g. 0.1.0.1)
 const [major, minor, patch, label = '0'] = version
@@ -25,7 +25,7 @@ const [major, minor, patch, label = '0'] = version
 
 export default defineManifest(async (env) => ({
   manifest_version: 3,
-  name: env.mode === 'development' ? `[DEV] ${name}` : name,
+  name: env.mode === 'development' ? `[DEV] Markdownizer` : "Markdownizer",
   description,
   // up to four numbers separated by dots
   version: `${major}.${minor}.${patch}.${label}`,
