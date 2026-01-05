@@ -1,10 +1,11 @@
 import { defineManifest } from '@crxjs/vite-plugin';
+import { loadEnv } from 'vite';
 import packageJson from './package.json';
 
 // Convert VITE_API_URL to a match pattern
 // e.g. "https://api.example.com/v1" -> "https://api.example.com/*"
-const getApiMatchPattern = () => {
-  const url = process.env.VITE_API_URL || 'http://localhost:8080/convert';
+const getApiMatchPattern = (env: Record<string, string>) => {
+  const url = env.VITE_API_URL || 'http://localhost:8080/convert';
   try {
     const origin = new URL(url).origin;
     return `${origin}/*`;
@@ -23,43 +24,49 @@ const [major, minor, patch, label = '0'] = version
   // split into version parts
   .split(/[.-]/);
 
-export default defineManifest(async (env) => ({
-  manifest_version: 3,
-  name: env.mode === 'development' ? `[DEV] Markdownizer` : "Markdownizer",
-  description,
-  // up to four numbers separated by dots
-  version: `${major}.${minor}.${patch}.${label}`,
-  // semver is OK in "version_name"
-  version_name: version,
-  permissions: [
-    "activeTab",
-    "scripting",
-    "storage"
-  ],
-  host_permissions: [
-    getApiMatchPattern()
-  ],
-  action: {
-    default_popup: "index.html",
-    default_icon: {
+export default defineManifest(async (env) => {
+  // Load env file based on `mode` in the current working directory.
+  // The third parameter '' is used to load all variables regardless of prefix.
+  const loadedEnv = loadEnv(env.mode, process.cwd(), '');
+
+  return {
+    manifest_version: 3,
+    name: env.mode === 'development' ? `[DEV] Markdownizer` : "Markdownizer",
+    description,
+    // up to four numbers separated by dots
+    version: `${major}.${minor}.${patch}.${label}`,
+    // semver is OK in "version_name"
+    version_name: version,
+    permissions: [
+      "activeTab",
+      "scripting",
+      "storage"
+    ],
+    host_permissions: [
+      getApiMatchPattern(loadedEnv)
+    ],
+    action: {
+      default_popup: "index.html",
+      default_icon: {
+        "16": "icons/icon16.png",
+        "48": "icons/icon48.png",
+        "128": "icons/icon128.png"
+      }
+    },
+    background: {
+      service_worker: "src/background.ts",
+      type: "module"
+    },
+    content_scripts: [
+      {
+        "matches": ["<all_urls>"],
+        "js": ["src/content.ts"]
+      }
+    ],
+    icons: {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
-  },
-  background: {
-    service_worker: "src/background.ts",
-    type: "module"
-  },
-  content_scripts: [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["src/content.ts"]
-    }
-  ],
-  icons: {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
-  }
-}));
+  };
+});
