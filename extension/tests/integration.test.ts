@@ -70,6 +70,51 @@ runner('Full Stack Integration (Frontend <-> Backend)', () => {
         expect(finalMarkdown).toContain('**bold** statement');
     });
 
+    it('should preserve code block indentation in lists (End-to-End)', async () => {
+        // Reproduces the issue where "npm ci" lost indentation
+        const htmlInput = `
+            <ol>
+                <li>
+                    <p>Step 1</p>
+                    <pre>line 1\nline 2</pre>
+                </li>
+            </ol>
+        `;
+        const root = setupDOM(htmlInput);
+        const ol = root.querySelector('ol') as HTMLElement;
+
+        // Frontend
+        const { html, tokens } = skeletonize(ol);
+
+        // Backend
+        const response = await fetch(API_URL, {
+            method: "POST",
+            headers: { 
+                "Content-Type": "application/json",
+                "Origin": "chrome-extension://integration-test",
+                "X-User-ID": TEST_USER_ID
+            },
+            body: JSON.stringify({ html_skeleton: html, url: "https://example.com" })
+        });
+
+        expect(response.ok).toBe(true);
+        const data = await response.json();
+
+        // Rehydrate
+        const markdown = rehydrate(data.markdown_skeleton, tokens);
+
+        // Expectation:
+        // 1. Step 1
+        //
+        //    ```
+        //    line 1
+        //    line 2
+        //    ```
+        // We check for the indentation of line 2 specifically.
+        expect(markdown).toContain('   line 1');
+        expect(markdown).toContain('   line 2');
+    });
+
     it('should fail with 403 Forbidden when Origin is invalid', async () => {
         const response = await fetch(API_URL, {
             method: "POST",

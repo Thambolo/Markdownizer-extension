@@ -3,7 +3,7 @@ import { JSDOM } from 'jsdom';
 import { skeletonize, rehydrate } from '../src/logic';
 
 describe('Skeleton Protocol', () => {
-    // Setup JSDOM environment helper
+    // Helper: Setup JSDOM environment
     function setupDOM(htmlString: string) {
         const dom = new JSDOM(htmlString);
         global.document = dom.window.document;
@@ -24,7 +24,7 @@ describe('Skeleton Protocol', () => {
         const article = root.querySelector('article') as HTMLElement;
         const { html, tokens } = skeletonize(article);
 
-        // Verify tokens are created
+        // Verify token generation
         expect(html).toContain('{{MDZ0}}');
         expect(Object.values(tokens)).toContain('Hello World');
         expect(Object.values(tokens)).toContain('test');
@@ -32,7 +32,7 @@ describe('Skeleton Protocol', () => {
         // Verify restoration
         const restored = rehydrate(html, tokens);
         expect(restored).toContain('<h1>Hello World</h1>');
-        // The dot is escaped because it's a special Markdown char
+        // Verify escaping of Markdown characters (dot is escaped)
         expect(restored).toContain('This is a <b>test</b>\\.');
     });
 
@@ -41,7 +41,7 @@ describe('Skeleton Protocol', () => {
             '{{MDZ0}}': 'Simple',
             '{{MDZ1}}': 'Complex'
         };
-        // Backend might escape braces: \{\{MDZ0\}\} 
+        // Simulate backend escaping of token braces: \{\{MDZ0\}\}
         const messySkeleton = `Title: \\{\\{MDZ0\\}\\}\nBody: \\{\\{MDZ1\\}\\}`;
         
         const result = rehydrate(messySkeleton, tokens);
@@ -53,14 +53,14 @@ describe('Skeleton Protocol', () => {
         const strong = root.querySelector('strong') as HTMLElement;
         const { html, tokens } = skeletonize(strong);
 
-        // Verify HTML has spaces outside token
+        // Verify preservation of surrounding whitespace
         expect(html).toContain('<strong> {{MDZ0}} </strong>');
         
-        // Token itself should be trimmed
+        // Verify token content is trimmed
         const tokenValue = Object.values(tokens)[0];
         expect(tokenValue).toBe('Joint work');
 
-        // Full rehydration should restore the spaces
+        // Verify rehydration restores original spacing
         const restored = rehydrate(html, tokens);
         expect(restored).toBe('<strong> Joint work </strong>');
     });
@@ -70,12 +70,12 @@ describe('Skeleton Protocol', () => {
         const div = root.querySelector('div') as HTMLElement;
         const { tokens } = skeletonize(div);
         
-        // "Line 1 Line 2" (internal space collapsed, outside spaces removed from token)
+        // Verify internal whitespace collapse
         const text = Object.values(tokens)[0];
         expect(text).toBe('Line 1 Line 2');
     });
 
-    it('should PRESERVE whitespace and special characters inside <pre> tags', () => {
+    it('should preserve whitespace and special characters inside <pre> tags', () => {
         const codeSnippet = `function test() {
     return "value | pipe";
 }
@@ -83,20 +83,24 @@ describe('Skeleton Protocol', () => {
         const root = setupDOM(`<pre>${codeSnippet}</pre>`);
         const pre = root.querySelector('pre') as HTMLElement;
         
-        const { tokens } = skeletonize(pre);
-        const text = Object.values(tokens)[0];
-
-        expect(text).toBe(codeSnippet);
+        const { tokens, html } = skeletonize(pre);
+        
+        // Verify code block is split into lines (including template literal trailing newline)
+        const lines = codeSnippet.split('\n');
+        expect(Object.keys(tokens)).toHaveLength(lines.length);
+        
+        // Verify exact restoration
+        const restored = rehydrate(html, tokens);
+        expect(restored).toBe(`<pre>${codeSnippet}</pre>`);
     });
 
-    it('should handle the "Mixed Bold/Italic Spacing" issue via Skeletonization', () => {
-        // Original problematic HTML
+    it('should handle mixed bold/italic spacing via skeletonization', () => {
         const root = setupDOM(`<p><strong> Joint work</strong> is <strong>not permitted</strong>.</p>`);
         const p = root.querySelector('p') as HTMLElement;
         
         const { html, tokens } = skeletonize(p);
         
-        // Verify tokenization kept the space out
+        // Verify token formatting
         expect(html).toContain('<strong> {{MDZ0}}</strong>');
         expect(tokens['{{MDZ0}}']).toBe('Joint work');
 
@@ -110,16 +114,17 @@ describe('Skeleton Protocol', () => {
         expect(restored).toContain('** Joint work**');
     });
 
-    it('should NOT escape pipes inside code blocks (checking behavior)', () => {
-        // Input: <code>cat file | grep</code>
-        // We expect: `cat file | grep` (no backslash before pipe)
-        const root = setupDOM(`<code>cat file | grep</code>`);
-        const code = root.querySelector('code') as HTMLElement;
+    it('should split by newline inside <pre> tags to preserve indentation intent', () => {
+        const root = setupDOM(`<pre>line1\nline2</pre>`);
+        const pre = root.querySelector('pre') as HTMLElement;
         
-        const { tokens } = skeletonize(code);
-        const text = Object.values(tokens)[0];
-
-        expect(text).toBe('cat file | grep');
-        expect(text).not.toContain('\\|');
+        const { html, tokens } = skeletonize(pre);
+        
+        // Verify distinct tokens per line
+        expect(Object.keys(tokens)).toHaveLength(2);
+        expect(html).toContain('{{MDZ0}}\n{{MDZ1}}');
+        
+        expect(tokens['{{MDZ0}}']).toBe('line1');
+        expect(tokens['{{MDZ1}}']).toBe('line2');
     });
 });

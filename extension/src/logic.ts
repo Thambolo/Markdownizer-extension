@@ -12,62 +12,80 @@ export interface TokenMap {
  * Returns the HTML string and the token map.
  */
 export function skeletonize(root: HTMLElement): { html: string, tokens: TokenMap } {
-    const tokens: TokenMap = {};
-    let counter = 0;
+    return new Skeletonizer().process(root);
+}
 
-    // Clone to avoid modifying the live DOM (if we passed a live reference)
-    const clone = root.cloneNode(true) as HTMLElement;
+class Skeletonizer {
+    private tokens: TokenMap = {};
+    private counter = 0;
 
-    // TreeWalker is faster than recursion for DOM traversal
-    const walker = document.createTreeWalker(
-        clone,
-        NodeFilter.SHOW_TEXT,
-        {
-            acceptNode: (node) => {
-                // Skip empty whitespace nodes
-                if (!node.textContent || node.textContent.trim().length === 0) {
-                    return NodeFilter.FILTER_SKIP;
+    public process(root: HTMLElement): { html: string, tokens: TokenMap } {
+        const clone = root.cloneNode(true) as HTMLElement;
+        const walker = document.createTreeWalker(
+            clone,
+            NodeFilter.SHOW_TEXT,
+            {
+                acceptNode: (node) => {
+                    if (!node.textContent || node.textContent.trim().length === 0) {
+                        return NodeFilter.FILTER_SKIP;
+                    }
+                    if (['SCRIPT', 'STYLE'].includes(node.parentElement?.tagName || '')) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    return NodeFilter.FILTER_ACCEPT;
                 }
-                // Skip script/style content if it somehow got in
-                if (['SCRIPT', 'STYLE'].includes(node.parentElement?.tagName || '')) {
-                    return NodeFilter.FILTER_REJECT;
-                }
-                return NodeFilter.FILTER_ACCEPT;
             }
-        }
-    );
+        );
 
-    while (walker.nextNode()) {
-        const node = walker.currentNode;
-        const text = node.textContent || "";
-        const tokenId = `${TOKEN_PREFIX}${counter}${TOKEN_SUFFIX}`;
-        
-        let cleanText = text;
-        
-        if (!isInsideCodeContext(node)) {
-            // Keep leading/trailing whitespace outside the token to preserve formatting
-            const leadingSpace = text.match(/^\s*/)?.[0] || "";
-            const trailingSpace = text.match(/\s*$/)?.[0] || "";
-            const trimmedText = text.trim();
-
-            // Collapse internal whitespace and escape Markdown chars
-            cleanText = escapeMarkdown(trimmedText.replace(/\s+/g, ' '));
-            
-            node.textContent = leadingSpace + tokenId + trailingSpace;
-        } else {
-            // We are inside a code block.
-            // If it is a PRE block, strip existing Markdown fences to prevent double-fencing
-            if (isInsidePre(node)) {
-                cleanText = cleanText.replace(/^\s*```+|```+\s*$/g, '');
-            }
-            node.textContent = tokenId;
+        while (walker.nextNode()) {
+            this.handleTextNode(walker.currentNode);
         }
 
-        tokens[tokenId] = cleanText;
-        counter++;
+        return { html: clone.outerHTML, tokens: this.tokens };
     }
 
-    return { html: clone.outerHTML, tokens };
+    private handleTextNode(node: Node): void {
+        const text = node.textContent || "";
+        
+        if (!isInsideCodeContext(node)) {
+            this.processStandardText(node, text);
+        } else {
+            this.processCodeBlock(node, text);
+        }
+    }
+
+    private processStandardText(node: Node, text: string): void {
+        const tokenId = this.createToken(null);
+        const leadingSpace = text.match(/^\s*/)?.[0] || "";
+        const trailingSpace = text.match(/\s*$/)?.[0] || "";
+        const trimmedText = text.trim();
+
+        // Collapse internal whitespace and escape Markdown chars
+        const cleanText = escapeMarkdown(trimmedText.replace(/\s+/g, ' '));
+        
+        node.textContent = leadingSpace + tokenId + trailingSpace;
+        this.tokens[tokenId] = cleanText;
+    }
+
+    private processCodeBlock(node: Node, text: string): void {
+        let cleanText = text;
+        if (isInsidePre(node)) {
+            cleanText = cleanText.replace(/^\s*```+|```+\s*$/g, '');
+        }
+
+        // Split by newline to preserve indentation in Markdown.
+        const lines = cleanText.split('\n');
+        const lineTokens = lines.map(line => this.createToken(line));
+        node.textContent = lineTokens.join('\n');
+    }
+
+    private createToken(content: string | null): string {
+        const id = `${TOKEN_PREFIX}${this.counter++}${TOKEN_SUFFIX}`;
+        if (content !== null) {
+            this.tokens[id] = content;
+        }
+        return id;
+    }
 }
 
 function isInsideCodeContext(node: Node): boolean {
