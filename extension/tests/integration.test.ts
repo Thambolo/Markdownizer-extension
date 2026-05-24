@@ -48,7 +48,9 @@ runner('Full Stack Integration (Frontend <-> Backend)', () => {
             },
             body: JSON.stringify({ 
                 html_skeleton: html, 
-                url: "https://example.com/test-page" 
+                url: "https://example.com/test-page",
+                client_type: "extension",
+                extraction_strategy: "semantic-html"
             })
         });
 
@@ -94,7 +96,12 @@ runner('Full Stack Integration (Frontend <-> Backend)', () => {
                 "Origin": "chrome-extension://integration-test",
                 "X-User-ID": TEST_USER_ID
             },
-            body: JSON.stringify({ html_skeleton: html, url: "https://example.com" })
+            body: JSON.stringify({
+                html_skeleton: html,
+                url: "https://example.com",
+                client_type: "extension",
+                extraction_strategy: "semantic-html"
+            })
         });
 
         expect(response.ok).toBe(true);

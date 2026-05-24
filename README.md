@@ -1,26 +1,26 @@
-# Markdownizer: The Privacy-First Web Clipper
+# Markdownizer Extension
 
-Convert any webpage into clean, structured Markdown. Locally and privately.
+Turn any webpage into clean Markdown for your preferred LLM.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)]()
 
-Markdownizer is a browser extension designed for developers and knowledge workers who need to convert web content into high-quality Markdown while maintaining total privacy. It is optimized for Personal Knowledge Management (PKM) systems like Obsidian and for providing clean, semantic context to Large Language Models (LLMs).
+Markdownizer is a browser extension for people who want to turn the current page into clean Markdown and feed it into their preferred LLM. The clearest use case is grabbing an assignment brief, documentation page, article, or research page and turning it into context that is easier to paste into ChatGPT, Claude, Gemini, or another LLM.
 
 ## Core Philosophy: Privacy by Design
 
-Most web clippers process content on third-party servers, exposing your reading history and private data. Markdownizer uses a **Client-Heavy Skeletonization** architecture to ensure your data stays on your machine.
+Most web clippers process readable content on third-party servers. Markdownizer uses a **Client-Heavy Skeletonization** architecture so readable page text is tokenized locally before conversion.
 
 1.  **Local Skeletonization**: The extension extracts the HTML structure locally and replaces all text content with anonymous tokens (e.g., `{{MDZ0}}`).
-2.  **Structural Conversion**: Only the structural "skeleton" (tags and layout) is sent to the API. The server sees the shape of the data but zero readable content.
+2.  **Structural Conversion**: The extension sends a structural skeleton to the API for conversion. The backend receives structure and metadata needed for conversion, but not the readable page text body.
 3.  **Local Rehydration**: The processed Markdown structure is returned, and the extension injects your original text back into the document locally.
 
 ## Features
 
 *   **One-Click Conversion**: Transform the active tab into Markdown instantly.
-*   **LLM Optimization**: Reduces token counts by 30-50% compared to raw HTML while preserving semantic hierarchy and logic.
+*   **LLM-Ready Output**: Produces cleaner context than raw HTML, messy copy-paste, or sending only the URL.
 *   **Smart Extraction**: Prioritizes main content and handles complex code blocks using an integrated `readability.js` engine.
-*   **Developer Friendly**: Automatically detects syntax highlighting languages and preserves nested list indentation.
+*   **Structure Preservation**: Keeps useful headings, lists, tables, and code blocks readable.
 
 ## Installation
 
@@ -41,10 +41,11 @@ Most web clippers process content on third-party servers, exposing your reading 
 
 ## Usage
 
-1.  Navigate to the webpage you wish to convert.
+1.  Navigate to the webpage you want to convert.
 2.  Click the **Markdownizer** icon in your browser toolbar.
 3.  Wait for the analysis to complete.
 4.  Use the **Copy** or **Download** buttons to retrieve your Markdown.
+5.  Paste the result into your preferred LLM.
 
 ## Development Setup
 
