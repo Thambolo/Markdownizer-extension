@@ -41,7 +41,12 @@ async function processPage() {
                 "Content-Type": "application/json",
                 "X-User-ID": userID
             },
-            body: JSON.stringify({ html_skeleton: html, url: window.location.href })
+            body: JSON.stringify({
+                html_skeleton: html,
+                url: window.location.href,
+                client_type: "extension",
+                extraction_strategy: extraction.strategy
+            })
         });
     } catch (e) {
         throw new Error("Could not reach server. Check your connection.");
