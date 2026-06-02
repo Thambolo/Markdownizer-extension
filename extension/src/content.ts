@@ -1,13 +1,10 @@
 import { getBestContent } from './extractor';
 import { skeletonize, rehydrate } from './logic';
-import { getOrCreateUserID } from './identity';
-import { mapHttpStatusToUserMessage } from './errors';
 
-// Constants
-const API_URL = import.meta.env.VITE_API_URL;
-
-interface ConversionResponse {
-    markdown_skeleton: string;
+interface BackgroundConversionResponse {
+    success: boolean;
+    markdown_skeleton?: string;
+    error?: string;
 }
 
 /**
@@ -31,33 +28,21 @@ async function processPage() {
     }
 
     const { html, tokens } = skeletonize(extraction.element);
-    const userID = await getOrCreateUserID();
+    const response: BackgroundConversionResponse = await chrome.runtime.sendMessage({
+        action: "convert_skeleton",
+        payload: {
+            html_skeleton: html,
+            url: window.location.href,
+            client_type: "extension",
+            extraction_strategy: extraction.strategy
+        }
+    });
 
-    let response: Response;
-    try {
-        response = await fetch(API_URL, {
-            method: "POST",
-            headers: { 
-                "Content-Type": "application/json",
-                "X-User-ID": userID
-            },
-            body: JSON.stringify({
-                html_skeleton: html,
-                url: window.location.href,
-                client_type: "extension",
-                extraction_strategy: extraction.strategy
-            })
-        });
-    } catch (e) {
-        throw new Error("Could not reach server. Check your connection.");
+    if (!response?.success || !response.markdown_skeleton) {
+        throw new Error(response?.error || "Could not convert page.");
     }
 
-    if (!response.ok) {
-        throw new Error(mapHttpStatusToUserMessage(response.status, response.statusText));
-    }
-
-    const data: ConversionResponse = await response.json();
-    const markdown = rehydrate(data.markdown_skeleton, tokens);
+    const markdown = rehydrate(response.markdown_skeleton, tokens);
 
     return { success: true, markdown };
 }
