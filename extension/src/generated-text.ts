@@ -10,9 +10,8 @@
 // Safety rules:
 // - Only a single quoted computed string of 1 to 4,096 characters is accepted.
 // - Unsupported CSS content values are rejected (none, normal, quotes, counters, url).
-// - Conflicting clone text is removed only when every ancestor from the text owner
-//   through the paired source element has computed font-size 0px, proving the original
-//   text is visually suppressed in favor of the generated replacement.
+// - Conflicting clone text is removed only when a Range over the source text has no
+//   non-zero client rects, proving the original text has no visible layout.
 
 export type Pseudo = '::before' | '::after';
 

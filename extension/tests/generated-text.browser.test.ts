@@ -81,11 +81,11 @@ describe('CSS-generated text in Chromium', () => {
     });
 
     it('replaces zero-size conflicting text with generated text via Readability', () => {
-        addStyle('.swap { font-size: 0; line-height: 0; } .swap::after { content: attr(data-seen); } .swap .hidden { font-size: 0; line-height: 0; }');
+        addStyle('.swap::after { content: attr(data-seen); } .cp { font-size: 0; line-height: 0; }');
         document.body.innerHTML = `
             <div class="wrap">
                 <p>${'Context '.repeat(100)}</p>
-                <p><span class="swap" data-seen="wait-list"><span class="hidden">rejected</span></span></p>
+                <p><span class="swap" data-seen="wait-list"><span class="cp">rejected</span></span></p>
             </div>
         `;
 
