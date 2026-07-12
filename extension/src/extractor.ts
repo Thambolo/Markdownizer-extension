@@ -1,13 +1,28 @@
 import { Readability } from './readability.js';
+import { recoverGeneratedText } from './generated-text.js';
 
 /**
  * Extractor Strategy Module
  * Priority: Semantic HTML > Documentation roots > Readability (Fallback)
  */
 
-interface ExtractionResult {
+export interface ExtractionResult {
     element: HTMLElement;
     strategy: string;
+}
+
+export function getReadabilityContent(): ExtractionResult | null {
+    const clone = document.cloneNode(true) as Document;
+    if (!document.body || !clone.body) return null;
+
+    recoverGeneratedText(document.body, clone.body);
+    // @ts-expect-error - Readability is a JS library without types here
+    const article = new Readability(clone).parse();
+    if (!article?.content) return null;
+
+    const element = document.createElement('div');
+    element.innerHTML = article.content;
+    return { element, strategy: 'readability' };
 }
 
 export function getBestContent(): ExtractionResult | null {
@@ -22,21 +37,8 @@ export function getBestContent(): ExtractionResult | null {
         return { element: documentationRoot as HTMLElement, strategy: "documentation-root" };
     }
 
-    // Fallback: Readability.js
-    // We clone the document so Readability doesn't destroy the live page
-    const clone = document.cloneNode(true) as Document;
-    // @ts-expect-error - Readability is a JS library without types here
-    const reader = new Readability(clone);
-    const article = reader.parse();
-
-    if (article && article.content) {
-        // Readability returns HTML string, we need a DOM element
-        const div = document.createElement('div');
-        div.innerHTML = article.content;
-        return { element: div, strategy: "readability" };
-    }
-
-    return null;
+    // Fallback: Readability with generated-text recovery
+    return getReadabilityContent();
 }
 
 function extractSemanticHTML(): Element | null {
