@@ -59,12 +59,18 @@ export function parseGeneratedContent(content: string): string | null {
 // traversal. If element counts differ (e.g. DOM changed between clone and read), the
 // function bails out without modifying the clone.
 //
-export function recoverGeneratedText(sourceRoot: HTMLElement, cloneRoot: HTMLElement, reader = browserReader): void {
+export function recoverGeneratedText(
+    sourceRoot: HTMLElement,
+    cloneRoot: HTMLElement,
+    reader = browserReader,
+    shouldRecover = (_source: HTMLElement) => true,
+): void {
     const sourceElements = [sourceRoot, ...Array.from(sourceRoot.querySelectorAll<HTMLElement>('*'))];
     const cloneElements = [cloneRoot, ...Array.from(cloneRoot.querySelectorAll<HTMLElement>('*'))];
     if (sourceElements.length !== cloneElements.length) return;
 
     sourceElements.forEach((source, index) => {
+        if (!shouldRecover(source)) return;
         const clone = cloneElements[index];
         const before = parseGeneratedContent(reader.content(source, '::before'));
         const after = parseGeneratedContent(reader.content(source, '::after'));

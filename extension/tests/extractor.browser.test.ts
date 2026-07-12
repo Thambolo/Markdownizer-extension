@@ -36,4 +36,18 @@ describe('visible-body extraction in Chromium', () => {
         expect(Object.values(tokens).join('')).toContain('Read these instructions');
         expect(html).toContain('language-json');
     });
+
+    it('does not recover pseudo-text from a removed source', () => {
+        addStyle('.off { visibility: hidden; } .off::after { content: "leaked pseudo-text"; }');
+        document.body.innerHTML = '<span class="off"></span><p>Instructions</p>';
+        expect(getComputedStyle(document.querySelector('.off')!, '::after').content).toBe('"leaked pseudo-text"');
+
+        const result = getVisibleBodyContent();
+        const { html, tokens } = skeletonize(result!.element);
+
+        expect(result?.strategy).toBe('visible-body');
+        expect(result?.element.textContent).not.toContain('leaked pseudo-text');
+        expect(Object.values(tokens)).not.toContain('leaked pseudo-text');
+        expect(html).not.toContain('leaked pseudo-text');
+    });
 });

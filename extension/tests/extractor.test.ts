@@ -20,6 +20,24 @@ describe('visible-body extraction', () => {
         expect(result?.element.tagName).toBe('MAIN');
     });
 
+    it('clones and sanitizes semantic content without changing its source', () => {
+        setupDOM('<body><main><p hidden>Hidden text</p><dialog>Closed dialog</dialog><script>secret()</script><p aria-hidden="true">ARIA label</p><p inert>Inert label</p><nav>Section navigation</nav><p>Instructions</p></main></body>');
+        const source = document.querySelector('main') as HTMLElement;
+        const result = getBestContent();
+
+        expect(result?.strategy).toBe('semantic-html');
+        expect(result?.element).not.toBe(source);
+        expect(result?.element.textContent).not.toContain('Hidden text');
+        expect(result?.element.textContent).not.toContain('Closed dialog');
+        expect(result?.element.querySelector('script, [hidden], dialog')).toBeNull();
+        expect(result?.element.textContent).toContain('ARIA label');
+        expect(result?.element.textContent).toContain('Inert label');
+        expect(result?.element.textContent).toContain('Section navigation');
+        expect(source.querySelector('[hidden]')).not.toBeNull();
+        expect(source.querySelector('dialog')).not.toBeNull();
+        expect(source.querySelector('script')).not.toBeNull();
+    });
+
     it('uses visible body content when no semantic root exists', () => {
         setupDOM('<body><div class="wrap"><h1>Assignment 2</h1><p>Submit Friday.</p><pre>g = f + d - e</pre></div></body>');
         const result = getBestContent();

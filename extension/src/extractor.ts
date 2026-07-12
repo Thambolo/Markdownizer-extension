@@ -26,9 +26,10 @@ export function getReadabilityContent(): ExtractionResult | null {
 }
 
 export function getBestContent(): ExtractionResult | null {
-    const semanticContent = extractSemanticHTML();
-    if (semanticContent) {
-        return { element: semanticContent as HTMLElement, strategy: 'semantic-html' };
+    const semanticSource = extractSemanticHTML();
+    if (semanticSource) {
+        const semanticContent = sanitizeVisibleContent(semanticSource);
+        if (semanticContent) return { element: semanticContent, strategy: 'semantic-html' };
     }
 
     return getVisibleBodyContent();
@@ -37,18 +38,23 @@ export function getBestContent(): ExtractionResult | null {
 export function getVisibleBodyContent(): ExtractionResult | null {
     if (!document.body) return null;
 
-    const sourceElements = [document.body, ...Array.from(document.body.querySelectorAll<HTMLElement>('*'))];
-    const body = document.body.cloneNode(true) as HTMLElement;
-    const cloneElements = [body, ...Array.from(body.querySelectorAll<HTMLElement>('*'))];
+    const body = sanitizeVisibleContent(document.body);
+    return body ? { element: body, strategy: 'visible-body' } : null;
+}
+
+function sanitizeVisibleContent(sourceRoot: HTMLElement): HTMLElement | null {
+    const sourceElements = [sourceRoot, ...Array.from(sourceRoot.querySelectorAll<HTMLElement>('*'))];
+    const cloneRoot = sourceRoot.cloneNode(true) as HTMLElement;
+    const cloneElements = [cloneRoot, ...Array.from(cloneRoot.querySelectorAll<HTMLElement>('*'))];
     if (sourceElements.length !== cloneElements.length) return null;
 
-    recoverGeneratedText(document.body, body);
+    recoverGeneratedText(sourceRoot, cloneRoot, undefined, (source) => !isRemovedFromVisibleBody(source));
     sourceElements.forEach((source, index) => {
         const clone = cloneElements[index];
-        if (body.contains(clone) && isRemovedFromVisibleBody(source)) clone.remove();
+        if (cloneRoot.contains(clone) && isRemovedFromVisibleBody(source)) clone.remove();
     });
 
-    return body.textContent?.trim() ? { element: body, strategy: 'visible-body' } : null;
+    return cloneRoot.textContent?.trim() ? cloneRoot : null;
 }
 
 function isRemovedFromVisibleBody(source: HTMLElement): boolean {
@@ -60,8 +66,8 @@ function isRemovedFromVisibleBody(source: HTMLElement): boolean {
     return style.display === 'none' || style.visibility === 'hidden';
 }
 
-function extractSemanticHTML(): Element | null {
-    return document.querySelector('article') 
-        || document.querySelector('main') 
-        || document.querySelector('[role="main"]');
+function extractSemanticHTML(): HTMLElement | null {
+    return document.querySelector<HTMLElement>('article')
+        || document.querySelector<HTMLElement>('main')
+        || document.querySelector<HTMLElement>('[role="main"]');
 }
