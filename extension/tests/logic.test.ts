@@ -129,7 +129,7 @@ describe('Skeleton Protocol', () => {
     });
 
     it('tokenizes normalized ReDoc JSON locally and rehydrates a fenced JSON response', () => {
-        const root = setupDOM(`<main><div id="redoc"><div data-section-id="operation/getPet"><div class="redoc-json"><code>{"id":"pet_1","active":true}</code></div></div></div></main>`);
+        const root = setupDOM(`<main><div id="redoc"><div class="api-content"><section data-section-id="tag/Pet-Data/paths/~1v2~1pet/get"><div class="redoc-json"><code>{"id":"pet_1","active":true}</code></div></section></div></div></main>`);
         const main = root.querySelector('main') as HTMLElement;
 
         const { html, tokens } = skeletonize(main);

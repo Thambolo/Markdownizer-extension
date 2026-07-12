@@ -103,11 +103,13 @@ describe('Extractor - API documentation pages', () => {
                     <main>
                         <header>API Overview</header>
                         <div id="redoc">
-                            <div data-section-id="operation/getPet">
-                                <h2>GET /pets</h2>
-                                <div class="redoc-json">
-                                    <code>{"id":"pet_1","active":true}</code>
-                                </div>
+                            <div class="api-content">
+                                <section data-section-id="tag/Pet-Data/paths/~1v2~1pet/get">
+                                    <h2>GET /pets</h2>
+                                    <div class="redoc-json">
+                                        <code>{"id":"pet_1","active":true}</code>
+                                    </div>
+                                </section>
                             </div>
                         </div>
                         <footer>Terms of service</footer>
