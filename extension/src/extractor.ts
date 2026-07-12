@@ -3,7 +3,7 @@ import { recoverGeneratedText } from './generated-text.js';
 
 /**
  * Extractor Strategy Module
- * Priority: Semantic HTML > Documentation roots > Readability (Fallback)
+ * Priority: Semantic HTML > visible body > Readability (Fallback)
  */
 
 export interface ExtractionResult {
@@ -26,33 +26,42 @@ export function getReadabilityContent(): ExtractionResult | null {
 }
 
 export function getBestContent(): ExtractionResult | null {
-    // Priority: Semantic HTML -> Documentation roots -> Readability
     const semanticContent = extractSemanticHTML();
     if (semanticContent) {
-        return { element: semanticContent as HTMLElement, strategy: "semantic-html" };
+        return { element: semanticContent as HTMLElement, strategy: 'semantic-html' };
     }
 
-    const documentationRoot = extractDocumentationRoot();
-    if (documentationRoot) {
-        return { element: documentationRoot as HTMLElement, strategy: "documentation-root" };
-    }
+    return getVisibleBodyContent();
+}
 
-    // Fallback: Readability with generated-text recovery
-    return getReadabilityContent();
+export function getVisibleBodyContent(): ExtractionResult | null {
+    if (!document.body) return null;
+
+    const sourceElements = [document.body, ...Array.from(document.body.querySelectorAll<HTMLElement>('*'))];
+    const body = document.body.cloneNode(true) as HTMLElement;
+    const cloneElements = [body, ...Array.from(body.querySelectorAll<HTMLElement>('*'))];
+    if (sourceElements.length !== cloneElements.length) return null;
+
+    recoverGeneratedText(document.body, body);
+    sourceElements.forEach((source, index) => {
+        const clone = cloneElements[index];
+        if (body.contains(clone) && isRemovedFromVisibleBody(source)) clone.remove();
+    });
+
+    return body.textContent?.trim() ? { element: body, strategy: 'visible-body' } : null;
+}
+
+function isRemovedFromVisibleBody(source: HTMLElement): boolean {
+    if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(source.tagName)) return true;
+    if (source.hasAttribute('hidden')) return true;
+    if (source.tagName === 'DIALOG' && !(source as HTMLDialogElement).open) return true;
+
+    const style = window.getComputedStyle(source);
+    return style.display === 'none' || style.visibility === 'hidden';
 }
 
 function extractSemanticHTML(): Element | null {
     return document.querySelector('article') 
         || document.querySelector('main') 
         || document.querySelector('[role="main"]');
-}
-
-function extractDocumentationRoot(): Element | null {
-    return document.querySelector('#redoc')
-        || document.querySelector('redoc')
-        || document.querySelector('.swagger-ui')
-        || document.querySelector('rapi-doc')
-        || document.querySelector('rapi-doc-mini')
-        || document.querySelector('scalar-api-reference')
-        || document.querySelector('.sl-elements');
 }

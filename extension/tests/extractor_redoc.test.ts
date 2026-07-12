@@ -6,13 +6,14 @@ import { skeletonize } from '../src/logic';
 describe('Extractor - API documentation pages', () => {
     function setupDOM(html: string) {
         const dom = new JSDOM(html, { url: 'https://developer.hypixel.net/' });
+        global.window = dom.window as unknown as Window & typeof globalThis;
         global.document = dom.window.document;
         global.NodeFilter = dom.window.NodeFilter;
         // @ts-expect-error - JSDOM global injection for browser-like extractor tests
         global.Node = dom.window.Node;
     }
 
-    it('should prefer a ReDoc documentation root over Readability fallback', () => {
+    it('should use the visible body for a ReDoc page without a semantic root', () => {
         setupDOM(`
             <html>
                 <body>
@@ -45,21 +46,20 @@ describe('Extractor - API documentation pages', () => {
         const result = getBestContent();
 
         expect(result).not.toBeNull();
-        expect(result?.strategy).not.toBe('readability');
-        expect(result?.strategy).toBe('documentation-root');
-        expect(result?.element.id).toBe('redoc');
+        expect(result?.strategy).toBe('visible-body');
+        expect(result?.element.tagName).toBe('BODY');
         expect(result?.element.querySelector('.redoc-json')).not.toBeNull();
         expect(result?.element.textContent).toContain('Garden data');
     });
 
     it.each([
-        ['redoc custom element', '<redoc><h1>ReDoc API docs</h1></redoc>', 'REDOC'],
-        ['Swagger UI root', '<div class="swagger-ui"><h1>Swagger API docs</h1></div>', 'DIV'],
-        ['RapiDoc root', '<rapi-doc><h1>RapiDoc API docs</h1></rapi-doc>', 'RAPI-DOC'],
-        ['RapiDoc mini root', '<rapi-doc-mini><h1>RapiDoc mini API docs</h1></rapi-doc-mini>', 'RAPI-DOC-MINI'],
-        ['Scalar API reference root', '<scalar-api-reference><h1>Scalar API docs</h1></scalar-api-reference>', 'SCALAR-API-REFERENCE'],
-        ['Stoplight Elements root', '<div class="sl-elements"><h1>Stoplight API docs</h1></div>', 'DIV'],
-    ])('should recognize %s before Readability fallback', (_name, rootHtml, expectedTagName) => {
+        ['redoc custom element', '<redoc><h1>ReDoc API docs</h1></redoc>'],
+        ['Swagger UI root', '<div class="swagger-ui"><h1>Swagger API docs</h1></div>'],
+        ['RapiDoc root', '<rapi-doc><h1>RapiDoc API docs</h1></rapi-doc>'],
+        ['RapiDoc mini root', '<rapi-doc-mini><h1>RapiDoc mini API docs</h1></rapi-doc-mini>'],
+        ['Scalar API reference root', '<scalar-api-reference><h1>Scalar API docs</h1></scalar-api-reference>'],
+        ['Stoplight Elements root', '<div class="sl-elements"><h1>Stoplight API docs</h1></div>'],
+    ])('should preserve %s and its body siblings', (_name, rootHtml) => {
         setupDOM(`
             <html>
                 <body>
@@ -73,9 +73,11 @@ describe('Extractor - API documentation pages', () => {
         const result = getBestContent();
 
         expect(result).not.toBeNull();
-        expect(result?.strategy).toBe('documentation-root');
-        expect(result?.element.tagName).toBe(expectedTagName);
+        expect(result?.strategy).toBe('visible-body');
+        expect(result?.element.tagName).toBe('BODY');
         expect(result?.element.textContent).toContain('API docs');
+        expect(result?.element.textContent).toContain('Navigation chrome');
+        expect(result?.element.textContent).toContain('Footer chrome');
     });
 
     it('should keep semantic article content higher priority than documentation roots', () => {

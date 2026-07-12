@@ -1,5 +1,6 @@
-import { getBestContent } from './extractor';
+import { getBestContent, getReadabilityContent } from './extractor';
 import { skeletonize, rehydrate } from './logic';
+import { shouldUseReadability } from './payload';
 
 interface BackgroundConversionResponse {
     success: boolean;
@@ -22,12 +23,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 async function processPage() {
-    const extraction = getBestContent();
-    if (!extraction) {
-        throw new Error("Could not find article content on this page.");
+    let extraction = getBestContent();
+    if (!extraction) throw new Error('Could not find visible page content.');
+
+    let skeleton = skeletonize(extraction.element);
+    if (shouldUseReadability(skeleton.html)) {
+        extraction = getReadabilityContent();
+        if (!extraction) throw new Error('Could not reduce page content to the supported size.');
+        skeleton = skeletonize(extraction.element);
     }
 
-    const { html, tokens } = skeletonize(extraction.element);
+    if (shouldUseReadability(skeleton.html)) {
+        throw new Error('This page is too large to convert.');
+    }
+
+    const { html, tokens } = skeleton;
     const response: BackgroundConversionResponse = await chrome.runtime.sendMessage({
         action: "convert_skeleton",
         payload: {
