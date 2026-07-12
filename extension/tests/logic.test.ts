@@ -127,4 +127,34 @@ describe('Skeleton Protocol', () => {
         expect(tokens['{{MDZ0}}']).toBe('line1');
         expect(tokens['{{MDZ1}}']).toBe('line2');
     });
+
+    it('tokenizes normalized ReDoc JSON locally and rehydrates a fenced JSON response', () => {
+        const root = setupDOM(`<main><div id="redoc"><div data-section-id="operation/getPet"><div class="redoc-json"><code>{"id":"pet_1","active":true}</code></div></div></div></main>`);
+        const main = root.querySelector('main') as HTMLElement;
+
+        const { html, tokens } = skeletonize(main);
+
+        // The normalizer rewrites .redoc-json code to <pre><code class="language-json">,
+        // then skeletonize replaces text nodes with tokens.
+        expect(html).toContain('<pre><code class="language-json">');
+        expect(html).not.toContain('pet_1');
+        expect(html).not.toContain('active');
+
+        // The code-context splitter may produce multiple tokens for the JSON string lines.
+        // At least one token value must contain the raw JSON content.
+        const tokenValues = Object.values(tokens);
+        expect(tokenValues.some(v => v.includes('"id":"pet_1"') || v.includes('pet_1'))).toBe(true);
+
+        // Build the simulated Markdown from the actual token keys in order.
+        const codeTokens = Object.keys(tokens).filter(k =>
+            tokens[k].includes('pet_1') || tokens[k].includes('active') || tokens[k].includes('"id"')
+        );
+        const markdownLines = codeTokens.map(k => k);
+        const markdown = '```json\n' + markdownLines.join('\n') + '\n```';
+
+        // Rehydrate should restore the original JSON content.
+        const restored = rehydrate(markdown, tokens);
+        expect(restored).toContain('pet_1');
+        expect(restored).toContain('active');
+    });
 });

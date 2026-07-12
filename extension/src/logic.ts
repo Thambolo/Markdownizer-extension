@@ -1,5 +1,7 @@
 // logic.ts - Shared logic for the extension
 
+import { normalizeRenderedReDoc } from './redoc-normalizer';
+
 export const TOKEN_PREFIX = "{{MDZ";
 export const TOKEN_SUFFIX = "}}";
 
@@ -21,6 +23,7 @@ class Skeletonizer {
 
     public process(root: HTMLElement): { html: string, tokens: TokenMap } {
         const clone = root.cloneNode(true) as HTMLElement;
+        normalizeRenderedReDoc(clone);
         const walker = document.createTreeWalker(
             clone,
             NodeFilter.SHOW_TEXT,

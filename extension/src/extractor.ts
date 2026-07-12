@@ -2,7 +2,7 @@ import { Readability } from './readability.js';
 
 /**
  * Extractor Strategy Module
- * Priority: Semantic HTML > Readability (Fallback)
+ * Priority: Semantic HTML > Documentation roots > Readability (Fallback)
  */
 
 interface ExtractionResult {
@@ -11,10 +11,15 @@ interface ExtractionResult {
 }
 
 export function getBestContent(): ExtractionResult | null {
-    // Priority: Semantic HTML -> Readability
+    // Priority: Semantic HTML -> Documentation roots -> Readability
     const semanticContent = extractSemanticHTML();
     if (semanticContent) {
         return { element: semanticContent as HTMLElement, strategy: "semantic-html" };
+    }
+
+    const documentationRoot = extractDocumentationRoot();
+    if (documentationRoot) {
+        return { element: documentationRoot as HTMLElement, strategy: "documentation-root" };
     }
 
     // Fallback: Readability.js
@@ -38,4 +43,14 @@ function extractSemanticHTML(): Element | null {
     return document.querySelector('article') 
         || document.querySelector('main') 
         || document.querySelector('[role="main"]');
+}
+
+function extractDocumentationRoot(): Element | null {
+    return document.querySelector('#redoc')
+        || document.querySelector('redoc')
+        || document.querySelector('.swagger-ui')
+        || document.querySelector('rapi-doc')
+        || document.querySelector('rapi-doc-mini')
+        || document.querySelector('scalar-api-reference')
+        || document.querySelector('.sl-elements');
 }
