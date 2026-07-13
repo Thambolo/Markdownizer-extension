@@ -152,6 +152,36 @@ runner('Full Stack Integration (Frontend <-> Backend)', () => {
         expect(response.status).toBe(400);
     });
 
+    it('rehydrates generated-code tokens after backend conversion', async () => {
+        const html = '<pre><code>{{MDZ0}}{{MDZ1}}{{MDZ2}}</code></pre>';
+        const tokens: Record<string, string> = {
+            '{{MDZ0}}': 'g = f + d ',
+            '{{MDZ1}}': '- ',
+            '{{MDZ2}}': 'e    # operations in conditional branch',
+        };
+
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Origin': 'chrome-extension://integration-test',
+                'X-User-ID': TEST_USER_ID,
+            },
+            body: JSON.stringify({
+                html_skeleton: html,
+                url: 'https://example.test/assignment',
+                client_type: 'extension',
+                extraction_strategy: 'semantic-html',
+            }),
+        });
+
+        expect(response.ok).toBe(true);
+        const data = await response.json();
+        const markdown = rehydrate(data.markdown_skeleton, tokens);
+
+        expect(markdown).toContain('g = f + d - e    # operations in conditional branch');
+    });
+
     it('should fail with 413 Payload Too Large for huge inputs', async () => {
         const hugeHtml = "a".repeat(1.5 * 1024 * 1024);
 

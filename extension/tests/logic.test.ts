@@ -128,6 +128,22 @@ describe('Skeleton Protocol', () => {
         expect(tokens['{{MDZ1}}']).toBe('line2');
     });
 
+    it('preserves ordinary code operators and formatting without generated text', () => {
+        const root = setupDOM('<pre><code>g = f + d - e * 2 / 3 <= 4\n\t# comment</code></pre>');
+        const { html, tokens } = skeletonize(root.querySelector('pre') as HTMLElement);
+
+        expect(rehydrate(html, tokens)).toBe('<pre><code>g = f + d - e * 2 / 3 <= 4\n\t# comment</code></pre>');
+    });
+
+    it('preserves code split across syntax-highlighted spans as contiguous text', () => {
+        const source = 'g = f + d - e    # operations in conditional branch';
+        const root = setupDOM(`<pre><code><span>g = f + d </span><span>- </span><span>e    # operations in conditional branch</span></code></pre>`);
+        const { html, tokens } = skeletonize(root.querySelector('pre') as HTMLElement);
+
+        const restored = new JSDOM(rehydrate(html, tokens));
+        expect(restored.window.document.querySelector('code')?.textContent).toContain(source);
+    });
+
     it('tokenizes normalized ReDoc JSON locally and rehydrates a fenced JSON response', () => {
         const root = setupDOM(`<main><div id="redoc"><div class="api-content"><section data-section-id="tag/Pet-Data/paths/~1v2~1pet/get"><div class="redoc-json"><code>{"id":"pet_1","active":true}</code></div></section></div></div></main>`);
         const main = root.querySelector('main') as HTMLElement;

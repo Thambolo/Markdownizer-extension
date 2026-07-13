@@ -18,6 +18,7 @@ extension/node_modules/
 extension/dist/
 extension/build/
 extension/coverage/
+extension/dist.zip
 
 # Logs
 npm-debug.log*

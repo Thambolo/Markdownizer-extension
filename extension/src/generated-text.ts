@@ -81,7 +81,7 @@ export function recoverGeneratedText(
     sourceRoot: HTMLElement,
     cloneRoot: HTMLElement,
     reader = browserReader,
-    shouldRecover = (_source: HTMLElement) => true,
+    shouldRecover = () => true,
 ): void {
     const sourceElements = [sourceRoot, ...Array.from(sourceRoot.querySelectorAll<HTMLElement>('*'))];
     const cloneElements = [cloneRoot, ...Array.from(cloneRoot.querySelectorAll<HTMLElement>('*'))];

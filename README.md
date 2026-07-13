@@ -3,7 +3,7 @@
 Turn any webpage into clean Markdown for your preferred LLM.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)]()
 
 Markdownizer is a browser extension for people who want to turn the current page into clean Markdown and feed it into their preferred LLM. The clearest use case is grabbing an assignment brief, documentation page, article, or research page and turning it into context that is easier to paste into ChatGPT, Claude, Gemini, or another LLM.
 
@@ -68,6 +68,20 @@ To build the extension for a specific API endpoint:
 ```bash
 VITE_API_URL=https://api.yourdomain.com npm run build
 ```
+
+For a stable extension ID while loading an unpacked **development** build, set
+`DEV_EXTENSION_KEY` in a local `.env` file. The key is intentionally ignored
+for production builds and Chrome Web Store uploads. Generate it from the
+`key` field of a development extension manifest; do not commit the key.
+
+### Tests
+
+```bash
+npm test -- --run
+npm run test:browser
+```
+
+Browser tests run Chromium headlessly through Playwright.
 
 ## Permissions Explained
 
