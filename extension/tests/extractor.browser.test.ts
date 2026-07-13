@@ -61,4 +61,29 @@ describe('visible-body extraction in Chromium', () => {
         expect(Object.values(tokens)).not.toContain('leaked pseudo-text');
         expect(html).not.toContain('leaked pseudo-text');
     });
+
+    it('preserves authored text without recovering pseudo-text from non-rendering sources', () => {
+        addStyle(`
+            .display-none { display: none; }
+            .display-none::after { content: " display-generated"; }
+            dialog::after { content: " dialog-generated"; }
+        `);
+        document.body.innerHTML = `
+            <h1>Instructions</h1>
+            <p class="display-none">display authored</p>
+            <dialog>dialog authored</dialog>
+        `;
+
+        const result = getBestContent();
+        const { html, tokens } = skeletonize(result!.element);
+        const text = Object.values(tokens).join(' ');
+
+        expect(result?.strategy).toBe('visible-body');
+        expect(text).toContain('display authored');
+        expect(text).toContain('dialog authored');
+        expect(text).not.toContain('display-generated');
+        expect(text).not.toContain('dialog-generated');
+        expect(html).not.toContain('display-generated');
+        expect(html).not.toContain('dialog-generated');
+    });
 });

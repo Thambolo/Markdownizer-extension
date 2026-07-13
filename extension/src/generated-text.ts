@@ -17,6 +17,8 @@ export type Pseudo = '::before' | '::after';
 
 export interface ComputedStyleReader {
     content(element: HTMLElement, pseudo: Pseudo): string;
+    canRender(element: HTMLElement): boolean;
+    isVisible(element: HTMLElement, pseudo: Pseudo): boolean;
     textHasVisibleLayout(text: Text): boolean;
 }
 
@@ -33,6 +35,18 @@ const browserReader: ComputedStyleReader = {
     content(element, pseudo) {
         if (typeof window === 'undefined') return 'none';
         return element.ownerDocument.defaultView!.getComputedStyle(element, pseudo).content;
+    },
+    canRender(element) {
+        for (let current: HTMLElement | null = element; current; current = current.parentElement) {
+            const style = current.ownerDocument.defaultView!.getComputedStyle(current);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            if (current instanceof HTMLDialogElement && !current.open) return false;
+        }
+        return true;
+    },
+    isVisible(element, pseudo) {
+        const style = element.ownerDocument.defaultView!.getComputedStyle(element, pseudo);
+        return style.display !== 'none' && style.visibility !== 'hidden';
     },
     textHasVisibleLayout(text) {
         const range = text.ownerDocument.createRange();
@@ -72,8 +86,12 @@ export function recoverGeneratedText(
     sourceElements.forEach((source, index) => {
         if (!shouldRecover(source)) return;
         const clone = cloneElements[index];
-        const before = parseGeneratedContent(reader.content(source, '::before'));
-        const after = parseGeneratedContent(reader.content(source, '::after'));
+        const before = reader.canRender(source) && reader.isVisible(source, '::before')
+            ? parseGeneratedContent(reader.content(source, '::before'))
+            : null;
+        const after = reader.canRender(source) && reader.isVisible(source, '::after')
+            ? parseGeneratedContent(reader.content(source, '::after'))
+            : null;
         const generated = [before, after].filter((value): value is string => value !== null);
 
         if (generated.length === 0) return;

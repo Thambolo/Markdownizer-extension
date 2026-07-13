@@ -12,11 +12,17 @@ function roots(html: string): { source: HTMLElement; clone: HTMLElement } {
     return { source, clone: source.cloneNode(true) as HTMLElement };
 }
 
-function reader(styles: Record<string, { before?: string; after?: string; visible?: boolean }>): ComputedStyleReader {
+function reader(styles: Record<string, { before?: string; after?: string; renderable?: boolean; visible?: boolean }>): ComputedStyleReader {
     return {
         content(element, pseudo) {
             const value = styles[element.id]?.[pseudo === '::before' ? 'before' : 'after'];
             return value ?? 'none';
+        },
+        canRender(element) {
+            return styles[element.id]?.renderable ?? true;
+        },
+        isVisible() {
+            return true;
         },
         textHasVisibleLayout(text) {
             const parentId = text.parentElement?.id;
@@ -89,6 +95,14 @@ it('keeps hidden text when source text has visible layout', () => {
     }));
 
     expect(clone.textContent).toBe('rejectedwait-list');
+});
+
+it('does not recover generated text from a non-rendering source', () => {
+    const { source, clone } = roots('<div id="source"><span id="hidden">authored</span></div>');
+
+    recoverGeneratedText(source, clone, reader({ hidden: { after: '"generated"', renderable: false } }));
+
+    expect(clone.textContent).toBe('authored');
 });
 
 it('leaves an ambiguous replacement unchanged', () => {

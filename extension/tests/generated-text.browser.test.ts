@@ -97,4 +97,29 @@ describe('CSS-generated text in Chromium', () => {
         expect(markdown).toContain('wait-list');
         expect(markdown).not.toContain('rejected');
     });
+
+    it('does not recover generated text from hidden pseudo-elements', () => {
+        addStyle(`
+            .display-hidden::after { content: attr(data-secret); display: none; }
+            .visibility-hidden::after { content: attr(data-secret); visibility: hidden; }
+        `);
+        document.body.innerHTML = `
+            <div class="wrap">
+                <p>${'Context '.repeat(100)}</p>
+                <p><span class="display-hidden" data-secret="display-secret">visible display label</span></p>
+                <p><span class="visibility-hidden" data-secret="visibility-secret">visible visibility label</span></p>
+            </div>
+        `;
+
+        const result = getReadabilityContent();
+        expect(result?.strategy).toBe('readability');
+        expect(result!.element.textContent).not.toContain('display-secret');
+        expect(result!.element.textContent).not.toContain('visibility-secret');
+
+        const { html, tokens } = skeletonize(result!.element);
+        const restored = document.createElement('div');
+        restored.innerHTML = rehydrate(html, tokens);
+        expect(restored.textContent).not.toContain('display-secret');
+        expect(restored.textContent).not.toContain('visibility-secret');
+    });
 });
