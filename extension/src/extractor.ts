@@ -48,22 +48,17 @@ function sanitizeVisibleContent(sourceRoot: HTMLElement): HTMLElement | null {
     const cloneElements = [cloneRoot, ...Array.from(cloneRoot.querySelectorAll<HTMLElement>('*'))];
     if (sourceElements.length !== cloneElements.length) return null;
 
-    recoverGeneratedText(sourceRoot, cloneRoot, undefined, (source) => !isRemovedFromVisibleBody(source));
+    recoverGeneratedText(sourceRoot, cloneRoot, undefined, (source) => !isNonContentElement(source));
     sourceElements.forEach((source, index) => {
         const clone = cloneElements[index];
-        if (cloneRoot.contains(clone) && isRemovedFromVisibleBody(source)) clone.remove();
+        if (cloneRoot.contains(clone) && isNonContentElement(source)) clone.remove();
     });
 
     return cloneRoot.textContent?.trim() ? cloneRoot : null;
 }
 
-function isRemovedFromVisibleBody(source: HTMLElement): boolean {
-    if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(source.tagName)) return true;
-    if (source.hasAttribute('hidden')) return true;
-    if (source.tagName === 'DIALOG' && !(source as HTMLDialogElement).open) return true;
-
-    const style = window.getComputedStyle(source);
-    return style.display === 'none' || style.visibility === 'hidden';
+function isNonContentElement(source: HTMLElement): boolean {
+    return ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(source.tagName);
 }
 
 function extractSemanticHTML(): HTMLElement | null {

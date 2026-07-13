@@ -17,14 +17,25 @@ afterEach(() => {
 });
 
 describe('visible-body extraction in Chromium', () => {
-    it('removes display-none and visibility-hidden nodes but keeps aria-hidden text', () => {
-        addStyle('.off { display: none; } .invisible { visibility: hidden; }');
-        document.body.innerHTML = '<p class="off">Off</p><p class="invisible">Invisible</p><p aria-hidden="true">Visible label</p><p>Instructions</p>';
+    it('retains inactive tab panels and their answer choices', () => {
+        addStyle('.pane { display: none; } .pane.active { display: block; }');
+        document.body.innerHTML = `
+            <h1>Assignment 2</h1>
+            <section class="pane" data-tab="q1"><h2>Q1 Decision Table</h2><label><input type="radio" name="q1">Option A</label></section>
+            <section class="pane" data-tab="q2"><h2>Q2 Control-Flow Graph</h2><label><input type="radio" name="q2">Option B</label></section>
+            <section class="pane active" data-tab="q5"><h2>Q5 Halstead</h2><label><input type="radio" name="q5">Option E</label></section>
+        `;
 
-        const result = getVisibleBodyContent();
-        expect(result?.element.textContent).not.toContain('Off');
-        expect(result?.element.textContent).not.toContain('Invisible');
-        expect(result?.element.textContent).toContain('Visible label');
+        const { html, tokens } = skeletonize(getBestContent()!.element);
+        const text = Object.values(tokens).join(' ').replace(/\\-/g, '-');
+
+        expect(text).toContain('Q1 Decision Table');
+        expect(text).toContain('Option A');
+        expect(text).toContain('Q2 Control-Flow Graph');
+        expect(text).toContain('Option B');
+        expect(text).toContain('Q5 Halstead');
+        expect(text).toContain('Option E');
+        expect(html).toContain('data-tab="q1"');
     });
 
     it('preserves body context while normalizing nested ReDoc JSON', () => {
@@ -37,7 +48,7 @@ describe('visible-body extraction in Chromium', () => {
         expect(html).toContain('language-json');
     });
 
-    it('does not recover pseudo-text from a removed source', () => {
+    it('does not recover pseudo-text from a hidden source because its pseudo-element is not rendered', () => {
         addStyle('.off { visibility: hidden; } .off::after { content: "leaked pseudo-text"; }');
         document.body.innerHTML = '<span class="off"></span><p>Instructions</p>';
         expect(getComputedStyle(document.querySelector('.off')!, '::after').content).toBe('"leaked pseudo-text"');

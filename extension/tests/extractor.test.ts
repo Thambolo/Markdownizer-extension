@@ -20,21 +20,19 @@ describe('visible-body extraction', () => {
         expect(result?.element.tagName).toBe('MAIN');
     });
 
-    it('clones and sanitizes semantic content without changing its source', () => {
-        setupDOM('<body><main><p hidden>Hidden text</p><dialog>Closed dialog</dialog><script>secret()</script><p aria-hidden="true">ARIA label</p><p inert>Inert label</p><nav>Section navigation</nav><p>Instructions</p></main></body>');
+    it('clones semantic content while preserving hidden authored nodes', () => {
+        setupDOM('<body><main><p hidden>Hidden text</p><p style="visibility: hidden">Invisible text</p><dialog>Closed dialog</dialog><p aria-hidden="true">ARIA label</p><p inert>Inert label</p><nav>Section navigation</nav><script>secret()</script><style>.x { color: red; }</style><noscript>No JavaScript</noscript><template>Template text</template></main></body>');
         const source = document.querySelector('main') as HTMLElement;
         const result = getBestContent();
 
-        expect(result?.strategy).toBe('semantic-html');
         expect(result?.element).not.toBe(source);
-        expect(result?.element.textContent).not.toContain('Hidden text');
-        expect(result?.element.textContent).not.toContain('Closed dialog');
-        expect(result?.element.querySelector('script, [hidden], dialog')).toBeNull();
+        expect(result?.element.textContent).toContain('Hidden text');
+        expect(result?.element.textContent).toContain('Invisible text');
+        expect(result?.element.textContent).toContain('Closed dialog');
         expect(result?.element.textContent).toContain('ARIA label');
         expect(result?.element.textContent).toContain('Inert label');
         expect(result?.element.textContent).toContain('Section navigation');
-        expect(source.querySelector('[hidden]')).not.toBeNull();
-        expect(source.querySelector('dialog')).not.toBeNull();
+        expect(result?.element.querySelector('script, style, noscript, template')).toBeNull();
         expect(source.querySelector('script')).not.toBeNull();
     });
 
@@ -47,13 +45,15 @@ describe('visible-body extraction', () => {
         expect(result?.element.textContent).toContain('Submit Friday.');
     });
 
-    it('removes objectively non-content nodes but retains visible navigation', () => {
-        setupDOM('<body><header>Course navigation</header><script>secret()</script><style>.x { color: red; }</style><template>template text</template><p hidden>Hidden text</p><dialog>Closed dialog</dialog><p>Visible instructions</p></body>');
+    it('removes non-content nodes while preserving hidden authored body content', () => {
+        setupDOM('<body><header>Course navigation</header><script>secret()</script><style>.x { color: red; }</style><noscript>No JavaScript</noscript><template>template text</template><p hidden>Hidden text</p><p style="visibility: hidden">Invisible text</p><dialog>Closed dialog</dialog><p>Visible instructions</p></body>');
         const result = getVisibleBodyContent();
 
         expect(result?.element.textContent).toContain('Course navigation');
         expect(result?.element.textContent).toContain('Visible instructions');
-        expect(result?.element.textContent).not.toContain('template text');
-        expect(result?.element.querySelector('script, style, template, [hidden], dialog')).toBeNull();
+        expect(result?.element.textContent).toContain('Hidden text');
+        expect(result?.element.textContent).toContain('Invisible text');
+        expect(result?.element.textContent).toContain('Closed dialog');
+        expect(result?.element.querySelector('script, style, noscript, template')).toBeNull();
     });
 });
