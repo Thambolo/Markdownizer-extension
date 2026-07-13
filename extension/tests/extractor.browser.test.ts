@@ -86,4 +86,18 @@ describe('visible-body extraction in Chromium', () => {
         expect(html).not.toContain('display-generated');
         expect(html).not.toContain('dialog-generated');
     });
+
+    it('preserves authored text without recovering pseudo-text from content-visibility hidden sources', () => {
+        addStyle('.content-hidden { content-visibility: hidden; } .content-hidden::after { content: " generated"; }');
+        document.body.innerHTML = '<p>Instructions</p><p class="content-hidden">authored</p>';
+
+        const result = getVisibleBodyContent();
+        const { html, tokens } = skeletonize(result!.element);
+        const text = Object.values(tokens).join(' ');
+
+        expect(result?.strategy).toBe('visible-body');
+        expect(text).toContain('authored');
+        expect(text).not.toContain('generated');
+        expect(html).not.toContain('generated');
+    });
 });

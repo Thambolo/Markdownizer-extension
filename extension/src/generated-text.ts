@@ -39,7 +39,7 @@ const browserReader: ComputedStyleReader = {
     canRender(element) {
         for (let current: HTMLElement | null = element; current; current = current.parentElement) {
             const style = current.ownerDocument.defaultView!.getComputedStyle(current);
-            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            if (style.display === 'none' || style.visibility === 'hidden' || style.contentVisibility === 'hidden') return false;
             if (current.tagName === 'DIALOG' && !(current as HTMLDialogElement).open) return false;
         }
         return true;
