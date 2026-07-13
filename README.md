@@ -7,6 +7,8 @@ Turn any webpage into clean Markdown for your preferred LLM.
 
 Markdownizer is a browser extension for people who want to turn the current page into clean Markdown and feed it into their preferred LLM. The clearest use case is grabbing an assignment brief, documentation page, article, or research page and turning it into context that is easier to paste into ChatGPT, Claude, Gemini, or another LLM.
 
+Landing page: [markdownizer.thambolo.com](https://markdownizer.thambolo.com/)
+
 ## Core Philosophy: Privacy by Design
 
 Most web clippers process readable content on third-party servers. Markdownizer uses a **Client-Heavy Skeletonization** architecture so readable page text is tokenized locally before conversion.
@@ -25,7 +27,7 @@ Most web clippers process readable content on third-party servers. Markdownizer 
 ## Installation
 
 ### Browser Stores
-*   **Chrome Web Store**: (Coming Soon)
+*   **Chrome Web Store**: [Install Markdownizer](https://chromewebstore.google.com/detail/mmnhipdmonlffimgilnemjmkfmdllfga?utm_source=github)
 *   **Firefox Add-ons**: (Coming Soon)
 
 ### Manual Installation (Developer Mode)
