@@ -152,4 +152,45 @@ describe('CSS-generated text in Chromium', () => {
         expect(restored.textContent).not.toContain('collapse-secret');
         expect(restored.textContent).not.toContain('content-visibility-secret');
     });
+
+    it('recovers a visible pseudo-element below a visibility-hidden ancestor', () => {
+        addStyle(`
+            .hidden-ancestor { visibility: hidden; }
+            .visible-source, .visible-source::after { visibility: visible; }
+            .visible-source::after { content: attr(data-generated); }
+        `);
+        document.body.innerHTML = '<p class="hidden-ancestor"><span class="visible-source" data-generated=" generated">authored</span></p>';
+
+        const { html, tokens } = skeletonize(document.querySelector('p') as HTMLElement);
+        const restored = document.createElement('div');
+        restored.innerHTML = rehydrate(html, tokens);
+
+        expect(restored.textContent).toBe('authored generated');
+    });
+
+    it('recovers generated text on a closed details summary but not its hidden content', () => {
+        addStyle(`
+            summary::after { content: attr(data-generated); }
+            .hidden-label::after { content: attr(data-generated); }
+        `);
+        document.body.innerHTML = `
+            <details>
+                <summary data-generated=" summary-generated">Summary</summary>
+                <p><span class="hidden-label" data-generated=" hidden-generated">Hidden</span></p>
+            </details>
+        `;
+
+        const summary = document.querySelector('summary') as HTMLElement;
+        expect(getComputedStyle(summary, '::after').content).toBe('" summary-generated"');
+        expect(getComputedStyle(summary, '::after').display).not.toBe('none');
+        expect(getComputedStyle(summary, '::after').visibility).toBe('visible');
+
+        const { html, tokens } = skeletonize(document.querySelector('details') as HTMLElement);
+        const restored = document.createElement('div');
+        restored.innerHTML = rehydrate(html, tokens);
+
+        expect(Object.values(tokens)).toContain('summary\\-generated');
+        expect(Object.values(tokens)).not.toContain('hidden\\-generated');
+        expect(restored.textContent).not.toContain('hidden-generated');
+    });
 });
