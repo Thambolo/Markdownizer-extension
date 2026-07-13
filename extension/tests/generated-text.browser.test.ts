@@ -122,4 +122,34 @@ describe('CSS-generated text in Chromium', () => {
         expect(restored.textContent).not.toContain('display-secret');
         expect(restored.textContent).not.toContain('visibility-secret');
     });
+
+    it('does not recover generated text from collapsed or content-hidden pseudo-elements', () => {
+        addStyle(`
+            .visibility-collapse::after { content: attr(data-secret); visibility: collapse; }
+            .content-visibility-hidden::after { content: attr(data-secret); content-visibility: hidden; }
+        `);
+        document.body.innerHTML = `
+            <div class="wrap">
+                <p>${'Context '.repeat(100)}</p>
+                <pre><code><span class="visibility-collapse" data-secret="collapse-secret">visible collapse label</span></code></pre>
+                <pre><code><span class="content-visibility-hidden" data-secret="content-visibility-secret">visible content label</span></code></pre>
+            </div>
+        `;
+
+        const result = getReadabilityContent();
+        expect(result?.strategy).toBe('readability');
+        expect(result!.element.textContent).toContain('visible collapse label');
+        expect(result!.element.textContent).toContain('visible content label');
+        expect(result!.element.textContent).not.toContain('collapse-secret');
+        expect(result!.element.textContent).not.toContain('content-visibility-secret');
+
+        const { html, tokens } = skeletonize(result!.element);
+        const restored = document.createElement('div');
+        restored.innerHTML = rehydrate(html, tokens);
+
+        expect(restored.textContent).toContain('visible collapse label');
+        expect(restored.textContent).toContain('visible content label');
+        expect(restored.textContent).not.toContain('collapse-secret');
+        expect(restored.textContent).not.toContain('content-visibility-secret');
+    });
 });

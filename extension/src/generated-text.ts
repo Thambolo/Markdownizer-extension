@@ -46,7 +46,10 @@ const browserReader: ComputedStyleReader = {
     },
     isVisible(element, pseudo) {
         const style = element.ownerDocument.defaultView!.getComputedStyle(element, pseudo);
-        return style.display !== 'none' && style.visibility !== 'hidden';
+        return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && style.visibility !== 'collapse'
+            && style.contentVisibility !== 'hidden';
     },
     textHasVisibleLayout(text) {
         const range = text.ownerDocument.createRange();
