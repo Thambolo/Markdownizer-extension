@@ -71,20 +71,6 @@ To build the extension for a specific API endpoint:
 VITE_API_URL=https://api.yourdomain.com npm run build
 ```
 
-For a stable extension ID while loading an unpacked **development** build, set
-`DEV_EXTENSION_KEY` in a local `.env` file. The key is intentionally ignored
-for production builds and Chrome Web Store uploads. Generate it from the
-`key` field of a development extension manifest; do not commit the key.
-
-### Tests
-
-```bash
-npm test -- --run
-npm run test:browser
-```
-
-Browser tests run Chromium headlessly through Playwright.
-
 ## Permissions Explained
 
 Markdownizer follows the Principle of Least Privilege:
