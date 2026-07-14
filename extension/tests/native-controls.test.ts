@@ -13,11 +13,13 @@ describe('serializeNativeControls', () => {
         const { source, clone } = roots('<div id="source"><input type="text" placeholder="Search" value="initial"></div>');
         const input = source.querySelector('input') as HTMLInputElement;
         input.value = 'edited';
+        const sourceHtml = source.innerHTML;
 
         serializeNativeControls(source, clone);
 
         expect(clone.querySelector('mdz-control')?.getAttribute('data-kind')).toBe('input');
         expect(clone.querySelector('mdz-control')?.textContent).toBe('placeholder: "Search"; value: "edited"');
+        expect(source.innerHTML).toBe(sourceHtml);
         expect(source.querySelector('input')?.value).toBe('edited');
     });
 

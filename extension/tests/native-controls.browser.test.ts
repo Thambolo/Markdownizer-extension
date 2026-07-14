@@ -9,6 +9,17 @@ function markdownFor(root: HTMLElement): string {
     return rehydrate(html, tokens);
 }
 
+function skeletonizeFiles(files: File[]): { html: string, tokens: Record<string, string>, markdown: string } {
+    document.body.innerHTML = '<input type="file">';
+    const input = document.querySelector('input') as HTMLInputElement;
+    const transfer = new DataTransfer();
+    for (const file of files) transfer.items.add(file);
+    Object.defineProperty(input, 'files', { value: transfer.files });
+
+    const { html, tokens } = skeletonize(document.body);
+    return { html, tokens, markdown: rehydrate(html, tokens) };
+}
+
 describe('native controls in Chromium', () => {
     it('keeps readable control state local while rendering markers in source order', () => {
         document.body.innerHTML = `
@@ -28,6 +39,13 @@ describe('native controls in Chromium', () => {
         expect(markdown).toContain('Radio: checked');
         expect(markdown).toContain('Canada');
         expect(markdown).toContain('line one');
+        const positions = [
+            markdown.indexOf('placeholder: "1"; value: "live"'),
+            markdown.indexOf('Radio: checked'),
+            markdown.indexOf('Canada'),
+            markdown.indexOf('line one')
+        ];
+        expect(positions).toEqual([...positions].sort((left, right) => left - right));
     });
 
     it('uses button label fallbacks without marker attributes carrying labels', () => {
@@ -65,22 +83,45 @@ describe('native controls in Chromium', () => {
         expect(markdown).toContain('Checkbox: unchecked');
     });
 
-    it('serializes selected options and file names but not file contents', () => {
-        document.body.innerHTML = '<select multiple><optgroup label="A"><option selected>One</option></optgroup><option selected>Two</option></select><input type="file">';
-        const file = document.querySelector('input') as HTMLInputElement;
-        const transfer = new DataTransfer();
-        transfer.items.add(new File(['secret body'], 'notes.txt', { type: 'text/plain' }));
-        transfer.items.add(new File(['another secret'], 'image.png', { type: 'image/png' }));
-        Object.defineProperty(file, 'files', { value: transfer.files });
+    it('serializes selected options', () => {
+        document.body.innerHTML = '<select multiple><optgroup label="A"><option selected>One</option></optgroup><option selected>Two</option></select>';
 
-        const { html, tokens } = skeletonize(document.body);
-        const markdown = rehydrate(html, tokens);
+        expect(markdownFor(document.body)).toContain('One, Two');
+    });
 
-        expect(markdown).toContain('One, Two');
-        expect(Object.values(tokens).join(' ')).toContain('notes\\.txt');
-        expect(Object.values(tokens).join(' ')).toContain('image\\.png');
-        expect(markdown).not.toContain('secret body');
+    it('serializes a zero-file selection as no files selected', () => {
+        const { markdown } = skeletonizeFiles([]);
+
+        expect(markdown).toContain('no files selected');
+    });
+
+    it('serializes one selected file name in tokenized and rehydrated text', () => {
+        const { html, tokens, markdown } = skeletonizeFiles([
+            new File(['secret body'], 'notes.txt', { type: 'text/plain' })
+        ]);
+        const tokenizedText = Object.values(tokens).join(' ');
+
+        expect(tokenizedText).toContain('notes\\.txt');
+        expect(markdown).toContain('notes\\.txt');
         expect(html).not.toContain('notes.txt');
+        expect(markdown).not.toContain('secret body');
+    });
+
+    it('serializes multiple selected file names in tokenized and rehydrated text', () => {
+        const { html, tokens, markdown } = skeletonizeFiles([
+            new File(['secret body'], 'notes.txt', { type: 'text/plain' }),
+            new File(['another secret'], 'image.png', { type: 'image/png' })
+        ]);
+        const tokenizedText = Object.values(tokens).join(' ');
+
+        expect(tokenizedText).toContain('notes\\.txt');
+        expect(tokenizedText).toContain('image\\.png');
+        expect(markdown).toContain('notes\\.txt');
+        expect(markdown).toContain('image\\.png');
+        expect(html).not.toContain('notes.txt');
+        expect(html).not.toContain('image.png');
+        expect(markdown).not.toContain('secret body');
+        expect(markdown).not.toContain('another secret');
     });
 
     it('does not read guarded password or hidden values', () => {
