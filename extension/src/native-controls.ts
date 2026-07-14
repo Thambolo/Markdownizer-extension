@@ -17,10 +17,10 @@ export function serializeNativeControls(sourceRoot: HTMLElement, cloneRoot: HTML
         const isButton = source.tagName === 'BUTTON';
 
         if (isInput && REDACTED_TYPES.has(type)) {
-            setMarker(marker, type, type, 'redacted', 'value hidden');
+            setMarker(marker, type, type, 'redacted');
         } else if (isInput && CHECKABLE_TYPES.has(type)) {
             const input = source as HTMLInputElement;
-            setMarker(marker, type, type, input.checked ? 'checked' : 'unchecked', `${title(type)}: ${input.checked ? 'checked' : 'unchecked'}`);
+            setMarker(marker, type, type, input.checked ? 'checked' : 'unchecked');
         } else if (isInput && type === 'file') {
             const names = Array.from((source as HTMLInputElement).files ?? [], (file) => file.name);
             setMarker(marker, 'file', type, 'files', names.length ? `files: ${names.map(quote).join(', ')}` : 'no files selected');
@@ -46,11 +46,11 @@ function controlType(control: HTMLElement): string {
     return control.tagName.toLowerCase();
 }
 
-function setMarker(marker: HTMLElement, kind: string, type: string, state: string, text: string): void {
+function setMarker(marker: HTMLElement, kind: string, type: string, state: string, text?: string): void {
     marker.setAttribute('data-kind', kind);
     marker.setAttribute('data-type', type);
     marker.setAttribute('data-state', state);
-    marker.textContent = text;
+    if (text) marker.textContent = text;
 }
 
 function textValue(placeholder: string, value: string): string {
@@ -64,8 +64,4 @@ function buttonLabel(control: HTMLElement, type: string): string {
 
 function quote(value: string): string {
     return JSON.stringify(value);
-}
-
-function title(value: string): string {
-    return value[0].toUpperCase() + value.slice(1);
 }

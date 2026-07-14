@@ -23,7 +23,7 @@ describe('serializeNativeControls', () => {
         expect(source.querySelector('input')?.value).toBe('edited');
     });
 
-    it('does not read password or hidden values', () => {
+    it('does not read password or hidden values or emit marker text for them', () => {
         const { source, clone } = roots('<div id="source"><input type="password"><input type="hidden"></div>');
         const controls = Array.from(source.querySelectorAll('input'));
         for (const control of controls) {
@@ -31,7 +31,7 @@ describe('serializeNativeControls', () => {
         }
 
         expect(() => serializeNativeControls(source, clone)).not.toThrow();
-        expect(clone.textContent).toContain('value hidden');
+        expect(clone.textContent).toBe('');
         expect(clone.textContent).not.toContain('value read');
     });
 
@@ -67,7 +67,11 @@ describe('serializeNativeControls', () => {
         expect(marker?.getAttribute('data-kind')).toBe(kind);
         expect(marker?.getAttribute('data-type')).toBe(type);
         expect(marker?.attributes.length).toBe(3);
-        expect(marker?.textContent).not.toBe('');
+        if (['checkbox', 'radio', 'password', 'hidden'].includes(type)) {
+            expect(marker?.textContent).toBe('');
+        } else {
+            expect(marker?.textContent).not.toBe('');
+        }
     });
 
     it('leaves the clone unchanged when source and clone controls cannot be paired', () => {

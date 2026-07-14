@@ -36,14 +36,15 @@ describe('native controls in Chromium', () => {
         expect(html).not.toContain('live');
         expect(html).not.toContain('Canada');
         expect(markdown).toContain('placeholder: "1"; value: "live"');
-        expect(markdown).toContain('Radio: checked');
+        expect(html).toContain('data-kind="radio"');
+        expect(html).toContain('data-state="checked"');
         expect(markdown).toContain('Canada');
         expect(markdown).toContain('line one');
         const positions = [
-            markdown.indexOf('placeholder: "1"; value: "live"'),
-            markdown.indexOf('Radio: checked'),
-            markdown.indexOf('Canada'),
-            markdown.indexOf('line one')
+            html.indexOf('data-kind="input"'),
+            html.indexOf('data-kind="radio"'),
+            html.indexOf('data-kind="select"'),
+            html.indexOf('data-kind="textarea"')
         ];
         expect(positions).toEqual([...positions].sort((left, right) => left - right));
     });
@@ -74,13 +75,15 @@ describe('native controls in Chromium', () => {
             <span id="labelled">Aria labelled</span><input type="checkbox" aria-labelledby="labelled">
         `;
 
-        const markdown = markdownFor(document.body);
+        const { html, tokens } = skeletonize(document.body);
+        const markdown = rehydrate(html, tokens);
         expect(markdown).toContain('For label');
         expect(markdown).toContain('Wrapping label');
         expect(markdown).toContain('Aria labelled');
-        expect(markdown).toContain('Checkbox: checked');
-        expect(markdown).toContain('Radio: unchecked');
-        expect(markdown).toContain('Checkbox: unchecked');
+        expect(html).toContain('data-kind="checkbox"');
+        expect(html).toContain('data-kind="radio"');
+        expect(html).toContain('data-state="checked"');
+        expect(html).toContain('data-state="unchecked"');
     });
 
     it('serializes selected options', () => {
@@ -133,15 +136,57 @@ describe('native controls in Chromium', () => {
         expect(() => skeletonize(document.body)).not.toThrow();
         const { html, tokens } = skeletonize(document.body);
         expect(html).not.toContain('value hidden');
-        expect(Object.values(tokens)).toContain('value hidden');
+        expect(Object.values(tokens)).not.toContain('value hidden');
+    });
+
+    it('does not tokenize structural markers while tokenizing value-bearing marker text', () => {
+        document.body.innerHTML = `
+            <label>First <input type="checkbox" checked> last</label>
+            <label><input type="radio"> second</label>
+            <input type="password" value="secret"><input type="hidden" value="internal">
+            <input type="text" value="live"><select><option selected>Canada</option></select>
+            <textarea>notes</textarea><input type="file">
+        `;
+
+        const { html, tokens } = skeletonize(document.body);
+        const tokenizedText = Object.values(tokens).join(' ');
+
+        expect(tokenizedText).not.toContain('Checkbox: checked');
+        expect(tokenizedText).not.toContain('Radio: unchecked');
+        expect(tokenizedText).not.toContain('value hidden');
+        expect(tokenizedText).toContain('value: "live"');
+        expect(tokenizedText).toContain('selected: "Canada"');
+        expect(tokenizedText).toContain('value: "notes"');
+        expect(tokenizedText).toContain('no files selected');
+        expect(html).not.toContain('live');
+        expect(html).not.toContain('Canada');
+        expect(html).not.toContain('notes');
+        expect(html).not.toContain('secret');
+        expect(html).not.toContain('internal');
+        expect(html.indexOf('{{MDZ0}}')).toBeLessThan(html.indexOf('data-kind="checkbox"'));
+        expect(html.indexOf('data-kind="checkbox"')).toBeLessThan(html.indexOf('{{MDZ1}}'));
+    });
+
+    it('rehydrates a representative backend control response in label DOM order', () => {
+        document.body.innerHTML = '<label>First <input type="checkbox" checked> last</label>';
+
+        const { html, tokens } = skeletonize(document.body);
+        const tokenIds = Object.keys(tokens);
+        const backendMarkerResponse = `${tokenIds[0]} [Checkbox: checked] ${tokenIds[1]}`;
+
+        expect(html).toContain('data-kind="checkbox"');
+        expect(Object.values(tokens)).toEqual(['First', 'last']);
+        expect(rehydrate(backendMarkerResponse, tokens)).toBe('First [Checkbox: checked] last');
     });
 
     it('retains controls through inactive tabs, nested layouts, lists, tables, and prose after code', () => {
         document.body.innerHTML = '<section class="tab"><div><table><tr><td><input value="table value"></td></tr></table><ul><li><input type="checkbox" checked> Item</li></ul></div></section><pre><code>const x = 1;</code></pre><p>After code <textarea>notes</textarea></p>';
-        const markdown = markdownFor(document.body);
+        const { html, tokens } = skeletonize(document.body);
+        const markdown = rehydrate(html, tokens);
 
         expect(markdown).toContain('table value');
-        expect(markdown).toContain('Checkbox: checked');
+        expect(html).toContain('data-kind="checkbox"');
+        expect(html).toContain('data-state="checked"');
         expect(markdown).toContain('After code');
         expect(markdown).toContain('notes');
     });
