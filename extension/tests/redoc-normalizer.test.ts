@@ -20,6 +20,7 @@ it('rewrites a confirmed ReDoc JSON viewer without changing outer content', () =
     expect(root.textContent).toContain('Outside');
     expect(root.textContent).toContain('Still outside');
     expect(root.querySelector('.api-content .redoc-json pre code')?.className).toBe('language-json');
+    expect(root.querySelector('.api-content .redoc-json pre code')?.hasAttribute('data-mdz-redoc-json')).toBe(false);
     expect(root.querySelector('.api-content .redoc-json pre code')?.textContent).toBe('{\n  "success": true\n}');
     expect(root.querySelector('.redoc-json button')).toBeNull();
 });

@@ -36,7 +36,7 @@ export default defineManifest(async (env) => {
 
   return {
     manifest_version: 3,
-    name: env.mode === 'development' ? `[DEV] Markdownizer` : "Markdownizer",
+    name: env.mode === 'development' ? `[DEV] Markdownizer` : "HTML to Markdown Converter - Markdownizer",
     ...(env.mode === 'development' ? getDevExtensionKey(loadedEnv) : {}),
     description,
     // up to four numbers separated by dots

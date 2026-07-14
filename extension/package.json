@@ -12,7 +12,10 @@
     "test:browser": "vitest --config vitest.browser.config.ts --run"
   },
   "dependencies": {
-    "preact": "^10.19.0"
+    "preact": "^10.19.0",
+    "remark": "^15.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-stringify": "^11.0.0"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.21",

@@ -35,6 +35,18 @@ describe('serializeNativeControls', () => {
         expect(clone.textContent).not.toContain('value read');
     });
 
+    it('classifies disabled text inputs with their normal value marker', () => {
+        const { source, clone } = roots('<div id="source"><input type="text" disabled value="Visible disabled value"></div>');
+
+        serializeNativeControls(source, clone);
+
+        const marker = clone.querySelector('mdz-control');
+        expect(marker?.getAttribute('data-kind')).toBe('input');
+        expect(marker?.getAttribute('data-type')).toBe('text');
+        expect(marker?.getAttribute('data-state')).toBe('value');
+        expect(marker?.textContent).toBe('value: "Visible disabled value"');
+    });
+
     it.each([
         ['text', '<input type="text" value="x">', 'input'],
         ['search', '<input type="search" value="x">', 'input'],

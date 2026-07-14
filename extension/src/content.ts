@@ -1,5 +1,5 @@
 import { getBestContent, getReadabilityContent } from './extractor';
-import { skeletonize, rehydrate } from './logic';
+import { skeletonize, rehydrateMarkdown } from './logic';
 import { shouldUseReadability } from './payload';
 
 interface BackgroundConversionResponse {
@@ -52,7 +52,7 @@ async function processPage() {
         throw new Error(response?.error || "Could not convert page.");
     }
 
-    const markdown = rehydrate(response.markdown_skeleton, tokens);
+    const markdown = rehydrateMarkdown(response.markdown_skeleton, tokens);
 
     return { success: true, markdown };
 }

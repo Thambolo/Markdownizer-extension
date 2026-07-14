@@ -30,11 +30,18 @@ const UNSUPPORTED_CONTENT = /^(none|normal|open-quote|close-quote|no-open-quote|
 // Matches a single quoted string: "..." or '...'. Captures the inner text.
 const QUOTED_CONTENT = /^(['"])((?:\\.|(?!\1)[\s\S])*)\1$/;
 
+// Chromium may preserve a standalone attr() expression in computed content.
+const STANDALONE_ATTR_CONTENT = /^attr\(\s*([-\w]+)\s*\)$/i;
+
 // Production reader that uses the browser's computed style engine.
 const browserReader: ComputedStyleReader = {
     content(element, pseudo) {
         if (typeof window === 'undefined') return 'none';
-        return element.ownerDocument.defaultView!.getComputedStyle(element, pseudo).content;
+        const content = element.ownerDocument.defaultView!.getComputedStyle(element, pseudo).content;
+        const attribute = content.match(STANDALONE_ATTR_CONTENT)?.[1];
+        return attribute && element.hasAttribute(attribute)
+            ? JSON.stringify(element.getAttribute(attribute)) ?? 'none'
+            : content;
     },
     canRender(element) {
         for (let current: HTMLElement | null = element; current; current = current.parentElement) {
