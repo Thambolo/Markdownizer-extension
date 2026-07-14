@@ -1,10 +1,24 @@
 // logic.ts - Shared logic for the extension
 
+import { normalizeRenderedReDoc } from './redoc-normalizer';
+import { recoverGeneratedText } from './generated-text';
+import { serializeNativeControls } from './native-controls';
+import { remark } from 'remark';
+import remarkGfm from 'remark-gfm';
+import remarkStringify from 'remark-stringify';
+
 export const TOKEN_PREFIX = "{{MDZ";
 export const TOKEN_SUFFIX = "}}";
 
 export interface TokenMap {
     [key: string]: string;
+}
+
+interface MarkdownNode {
+    type: string;
+    value?: string;
+    lang?: string | null;
+    children?: MarkdownNode[];
 }
 
 /**
@@ -21,6 +35,9 @@ class Skeletonizer {
 
     public process(root: HTMLElement): { html: string, tokens: TokenMap } {
         const clone = root.cloneNode(true) as HTMLElement;
+        recoverGeneratedText(root, clone);
+        serializeNativeControls(root, clone);
+        normalizeRenderedReDoc(clone);
         const walker = document.createTreeWalker(
             clone,
             NodeFilter.SHOW_TEXT,
@@ -60,8 +77,7 @@ class Skeletonizer {
         const trailingSpace = text.match(/\s*$/)?.[0] || "";
         const trimmedText = text.trim();
 
-        // Collapse internal whitespace and escape Markdown chars
-        const cleanText = escapeMarkdown(trimmedText.replace(/\s+/g, ' '));
+        const cleanText = trimmedText.replace(/\s+/g, ' ');
         
         node.textContent = leadingSpace + tokenId + trailingSpace;
         this.tokens[tokenId] = cleanText;
@@ -75,7 +91,7 @@ class Skeletonizer {
 
         // Split by newline to preserve indentation in Markdown.
         const lines = cleanText.split('\n');
-        const lineTokens = lines.map(line => this.createToken(line));
+        const lineTokens = lines.map((line) => this.createToken(line));
         node.textContent = lineTokens.join('\n');
     }
 
@@ -111,39 +127,21 @@ function isInsidePre(node: Node): boolean {
 }
 
 /**
- * Escapes characters that have special meaning in Markdown.
+ * Rehydrates backend Markdown by replacing tokens only in literal AST values.
  */
-function escapeMarkdown(text: string): string {
-    // List of chars to escape: \ * _ { } [ ] ( ) # + - . ! | > ~ `
-    return text.replace(/([\\*_{}[\]()#+\-.!|>~`])/g, '\\$1');
+export function rehydrateMarkdown(markdown: string, tokenMap: TokenMap): string {
+    const processor = remark().use(remarkGfm).use(remarkStringify);
+    const tree = processor.parse(markdown) as unknown as MarkdownNode;
+    replaceLiteralTokens(tree, tokenMap);
+    return processor.stringify(tree as never);
 }
 
-/**
- * Rehydrate: Replaces tokens in the markdown string with original text.
- */
-export function rehydrate(skeleton: string, tokens: TokenMap): string {
-    let result = skeleton;
-
-    // Regex: Matches {{MDZ0}} or \{\{MDZ0\}\} or mixed escaping, OR URL-encoded versions
-    const tokenRegex = /(?:\\?\{|%7B){2}MDZ\d+(?:\\?\}|%7D){2}/g;
-
-    result = result.replace(tokenRegex, (match) => {
-        // Normalize the match key by removing backslashes and decoding URI components
-        let key = match.replace(/\\/g, '');
-        
-        if (key.includes('%')) {
-            try {
-                key = decodeURIComponent(key);
-            } catch (e) {
-                // validation fallback
-            }
-        }
-
-        if (Object.prototype.hasOwnProperty.call(tokens, key)) {
-            return tokens[key];
-        }
-        return match; 
-    });
-
-    return result;
+function replaceLiteralTokens(node: MarkdownNode, tokenMap: TokenMap): void {
+    if ((node.type === 'text' || node.type === 'inlineCode' || node.type === 'code') && node.value) {
+        node.value = node.value.replace(/\{\{MDZ\d+\}\}/g, (token) => {
+            if (Object.prototype.hasOwnProperty.call(tokenMap, token)) return tokenMap[token];
+            return token;
+        });
+    }
+    node.children?.forEach((child) => replaceLiteralTokens(child, tokenMap));
 }

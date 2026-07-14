@@ -1,13 +1,11 @@
-import { getBestContent } from './extractor';
-import { skeletonize, rehydrate } from './logic';
-import { getOrCreateUserID } from './identity';
-import { mapHttpStatusToUserMessage } from './errors';
+import { getBestContent, getReadabilityContent } from './extractor';
+import { skeletonize, rehydrateMarkdown } from './logic';
+import { shouldUseReadability } from './payload';
 
-// Constants
-const API_URL = import.meta.env.VITE_API_URL;
-
-interface ConversionResponse {
-    markdown_skeleton: string;
+interface BackgroundConversionResponse {
+    success: boolean;
+    markdown_skeleton?: string;
+    error?: string;
 }
 
 /**
@@ -25,39 +23,36 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 async function processPage() {
-    const extraction = getBestContent();
-    if (!extraction) {
-        throw new Error("Could not find article content on this page.");
+    let extraction = getBestContent();
+    if (!extraction) throw new Error('Could not find visible page content.');
+
+    let skeleton = skeletonize(extraction.element);
+    if (shouldUseReadability(skeleton.html)) {
+        extraction = getReadabilityContent();
+        if (!extraction) throw new Error('Could not reduce page content to the supported size.');
+        skeleton = skeletonize(extraction.element);
     }
 
-    const { html, tokens } = skeletonize(extraction.element);
-    const userID = await getOrCreateUserID();
-
-    let response: Response;
-    try {
-        response = await fetch(API_URL, {
-            method: "POST",
-            headers: { 
-                "Content-Type": "application/json",
-                "X-User-ID": userID
-            },
-            body: JSON.stringify({
-                html_skeleton: html,
-                url: window.location.href,
-                client_type: "extension",
-                extraction_strategy: extraction.strategy
-            })
-        });
-    } catch (e) {
-        throw new Error("Could not reach server. Check your connection.");
+    if (shouldUseReadability(skeleton.html)) {
+        throw new Error('This page is too large to convert.');
     }
 
-    if (!response.ok) {
-        throw new Error(mapHttpStatusToUserMessage(response.status, response.statusText));
+    const { html, tokens } = skeleton;
+    const response: BackgroundConversionResponse = await chrome.runtime.sendMessage({
+        action: "convert_skeleton",
+        payload: {
+            html_skeleton: html,
+            url: window.location.href,
+            client_type: "extension",
+            extraction_strategy: extraction.strategy
+        }
+    });
+
+    if (!response?.success || !response.markdown_skeleton) {
+        throw new Error(response?.error || "Could not convert page.");
     }
 
-    const data: ConversionResponse = await response.json();
-    const markdown = rehydrate(data.markdown_skeleton, tokens);
+    const markdown = rehydrateMarkdown(response.markdown_skeleton, tokens);
 
     return { success: true, markdown };
 }

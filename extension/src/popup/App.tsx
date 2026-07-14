@@ -65,6 +65,9 @@ export function App() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab.id) throw new Error("No active tab found");
+      if (!isSupportedPageUrl(tab.url)) {
+        throw new Error("Open a normal webpage first. Markdownizer cannot run on browser settings, extension pages, or internal URLs.");
+      }
 
       const response = await ensureContentScriptLoaded(tab.id);
       processResponse(response, tab);
@@ -134,6 +137,17 @@ export function App() {
 
       </div>
     );
+}
+
+function isSupportedPageUrl(url?: string): boolean {
+    if (!url) return false;
+
+    try {
+        const parsed = new URL(url);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+        return false;
+    }
 }
 
 /**

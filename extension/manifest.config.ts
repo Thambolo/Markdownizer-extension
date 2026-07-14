@@ -15,6 +15,11 @@ const getApiMatchPattern = (env: Record<string, string>) => {
   }
 };
 
+const getDevExtensionKey = (env: Record<string, string>) => {
+  const key = env.DEV_EXTENSION_KEY?.trim();
+  return key ? { key } : {};
+};
+
 const { version, description } = packageJson;
 
 // Convert from SemVer (e.g. 0.1.0-beta.1) to Chrome version (e.g. 0.1.0.1)
@@ -31,7 +36,8 @@ export default defineManifest(async (env) => {
 
   return {
     manifest_version: 3,
-    name: env.mode === 'development' ? `[DEV] Markdownizer` : "Markdownizer",
+    name: env.mode === 'development' ? `[DEV] Markdownizer` : "HTML to Markdown Converter - Markdownizer",
+    ...(env.mode === 'development' ? getDevExtensionKey(loadedEnv) : {}),
     description,
     // up to four numbers separated by dots
     version: `${major}.${minor}.${patch}.${label}`,
