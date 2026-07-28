@@ -163,9 +163,26 @@ describe('openPreviewSession', () => {
         chrome.tabs.sendMessage.mockResolvedValue({ success: true });
 
         const session1 = await openPreviewSession(1);
-        const session2 = await openPreviewSession(2);
+        const port1 = lastPort; // Capture first session's port
 
-        // Both sessions should work without error (they have different session IDs)
+        const session2 = await openPreviewSession(2);
+        const port2 = lastPort; // Capture second session's port
+
+        // Trigger a message on each session to populate postMessage calls
+        session1.show();
+        session2.show();
+
+        // Extract session IDs from the postMessage calls
+        const sessionId1 = port1!.postMessage.mock.calls[0][0].sessionId;
+        const sessionId2 = port2!.postMessage.mock.calls[0][0].sessionId;
+
+        // Verify both are strings
+        expect(typeof sessionId1).toBe('string');
+        expect(typeof sessionId2).toBe('string');
+
+        // Verify they are different (unique)
+        expect(sessionId1).not.toBe(sessionId2);
+
         session1.disconnect();
         session2.disconnect();
     });
