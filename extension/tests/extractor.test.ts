@@ -1,14 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
+import { CapturePreview, PREVIEW_HOST_ATTRIBUTE } from '../src/capture-preview';
 import { getBestContent, getVisibleBodyContent } from '../src/extractor';
+import { skeletonize } from '../src/logic';
 
 function setupDOM(html: string): void {
-    const dom = new JSDOM(html, { url: 'https://example.test/' });
+    const dom = new JSDOM(html, { url: 'https://example.test/', pretendToBeVisual: true });
     global.window = dom.window as unknown as Window & typeof globalThis;
     global.document = dom.window.document;
     global.NodeFilter = dom.window.NodeFilter;
     // @ts-expect-error - JSDOM global injection for browser-like extractor tests
     global.Node = dom.window.Node;
+    // Expose JSDOM browser APIs as globals for CapturePreview tracking
+    if (!global.MutationObserver) global.MutationObserver = dom.window.MutationObserver;
+    if (!global.ResizeObserver) {
+        global.ResizeObserver = dom.window.ResizeObserver ?? class {
+            observe() {}
+            unobserve() {}
+            disconnect() {}
+        } as unknown as typeof ResizeObserver;
+    }
+    if (!global.requestAnimationFrame) {
+        global.requestAnimationFrame = (cb: FrameRequestCallback) => setTimeout(cb, 0) as unknown as number;
+    }
+    if (!global.cancelAnimationFrame) {
+        global.cancelAnimationFrame = (id: number) => clearTimeout(id);
+    }
 }
 
 describe('visible-body extraction', () => {
@@ -77,5 +94,39 @@ describe('visible-body extraction', () => {
         expect(result?.strategy).toBe('visible-body');
         expect(result?.sourceElement).toBe(document.body);
         expect(result?.element).not.toBe(document.body);
+    });
+});
+
+describe('Preview contamination regression', () => {
+    it('never leaks CapturePreview markup or host into extraction or skeleton', () => {
+        // Body-fallback page: no semantic root (no <main>, <article>, [role="main"])
+        setupDOM('<body><h1>Assignment</h1><p>Submit Friday.</p></body>');
+
+        // Show the preview overlay on document.body
+        const preview = new CapturePreview();
+        preview.show(document.body);
+
+        // Extract content (should take the visible-body path)
+        const extraction = getBestContent();
+        expect(extraction).not.toBeNull();
+        expect(extraction!.strategy).toBe('visible-body');
+
+        // The extraction clone must not contain the preview host
+        expect(extraction!.element.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`)).toBeNull();
+
+        // Skeletonize the extraction result
+        const skeleton = skeletonize(extraction!.element);
+
+        // Skeleton HTML must not contain any preview-related markup or color
+        expect(skeleton.html).not.toContain('markdownizer-preview');
+        expect(skeleton.html).not.toContain('#6366f1');
+        expect(skeleton.html).not.toContain(PREVIEW_HOST_ATTRIBUTE);
+
+        // Token values must not contain the word 'Preview'
+        const allTokenValues = Object.values(skeleton.tokens).join(' ');
+        expect(allTokenValues).not.toContain('Preview');
+
+        // Clean up
+        preview.remove();
     });
 });
