@@ -4,12 +4,6 @@ import { PREVIEW_HOST_ATTRIBUTE } from '../src/capture-preview';
 
 // ── Chrome API Mocks ──────────────────────────────────────────────────────────
 
-type RuntimeMessageListener = (
-    request: unknown,
-    sender: unknown,
-    sendResponse: (response: unknown) => void
-) => boolean | undefined;
-
 type RuntimeConnectListener = (port: MockPort) => void;
 
 interface MockPort {
@@ -55,7 +49,6 @@ function createMockPort(name: string): MockPort {
     return port;
 }
 
-let messageListener: RuntimeMessageListener | undefined;
 let connectListener: RuntimeConnectListener | undefined;
 
 function createChromeMock() {
@@ -63,8 +56,8 @@ function createChromeMock() {
         runtime: {
             onInstalled: { addListener: vi.fn() },
             onMessage: {
-                addListener: vi.fn((listener: RuntimeMessageListener) => {
-                    messageListener = listener;
+                addListener: vi.fn(() => {
+                    // messageListener not needed for preview protocol tests
                 })
             },
             onConnect: {
@@ -105,36 +98,15 @@ class StubMutationObserver {
     takeRecords(): MutationRecord[] { return []; }
 }
 
-let rafCallbacks: FrameRequestCallback[] = [];
-let rafId = 0;
-
-function stubAnimationFrames() {
-    rafCallbacks = [];
-    rafId = 0;
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
-        rafCallbacks.push(cb);
-        return ++rafId;
-    });
-    vi.stubGlobal('cancelAnimationFrame', vi.fn());
-}
-
-function flushRaf() {
-    const cbs = [...rafCallbacks];
-    rafCallbacks = [];
-    cbs.forEach(cb => cb(performance.now()));
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('Content-script preview protocol', () => {
     beforeEach(() => {
         vi.stubGlobal('ResizeObserver', StubResizeObserver);
         vi.stubGlobal('MutationObserver', StubMutationObserver);
-        stubAnimationFrames();
         vi.resetModules();
         // @ts-expect-error – injecting global chrome for content script
         global.chrome = createChromeMock();
-        messageListener = undefined;
         connectListener = undefined;
     });
 

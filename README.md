@@ -23,6 +23,8 @@ Most web clippers process readable content on third-party servers. Markdownizer 
 *   **LLM-Ready Output**: Produces cleaner context than raw HTML, messy copy-paste, or sending only the URL.
 *   **Smart Extraction**: Prioritizes main content and handles complex code blocks using an integrated `readability.js` engine.
 *   **Structure Preservation**: Keeps useful headings, lists, tables, and code blocks readable.
+*   **Capture Preview**: Shows an outline around the content region that will be converted, so you can verify the extraction target before you commit to the conversion.
+*   **Persistent Control**: Your preview preference is remembered across sessions and page loads.
 
 ## Installation
 
@@ -45,9 +47,24 @@ Most web clippers process readable content on third-party servers. Markdownizer 
 
 1.  Navigate to the webpage you want to convert.
 2.  Click the **Markdownizer** icon in your browser toolbar.
-3.  Wait for the analysis to complete.
-4.  Use the **Copy** or **Download** buttons to retrieve your Markdown.
-5.  Paste the result into your preferred LLM.
+3.  A preview outline appears on the page showing the content region that will be converted. This is the same region used by Smart Extraction (article, main, or the visible body).
+4.  Toggle the **Preview** checkbox in the footer to show or hide the outline. This preference persists across sessions.
+5.  Click **Start** to begin conversion. The outline changes to a loading shimmer while the page is being processed.
+6.  Use the **Copy** or **Download** buttons to retrieve your Markdown.
+7.  Paste the result into your preferred LLM.
+
+## Capture Preview
+
+When you open Markdownizer, an indigo outline appears on the page highlighting the content region that will be converted. This is the same region used by Smart Extraction — typically the `<article>`, `<main>`, or `[role="main"]` element, falling back to the visible body.
+
+The preview outline is rendered in an isolated Shadow DOM and uses `pointer-events: none`, so it never blocks clicks, scrolling, or text selection. The outline tracks the target element's geometry and updates if the page layout changes.
+
+**Preview behavior:**
+
+*   **Default on**: Opening Markdownizer shows the preview outline immediately.
+*   **Persistent setting**: The Preview toggle remembers your choice across popup opens and page reloads.
+*   **Loading state**: Clicking Start changes the outline to a shimmer animation, indicating conversion is in progress.
+*   **No content contamination**: The preview overlay is completely isolated from the extraction pipeline. Converted Markdown never contains preview markup, styles, or text.
 
 ## Development Setup
 
@@ -76,7 +93,7 @@ VITE_API_URL=https://api.yourdomain.com npm run build
 Markdownizer follows the Principle of Least Privilege:
 *   `activeTab`: Required to capture the structure of the currently focused page.
 *   `scripting`: Required to execute the extraction engine within the page context.
-*   `storage`: Required to persist user preferences (e.g., auto-download settings).
+*   `storage`: Required to persist user preferences (auto-download settings and capture preview toggle).
 
 ## License
 
