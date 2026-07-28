@@ -56,4 +56,26 @@ describe('visible-body extraction', () => {
         expect(result?.element.textContent).toContain('Closed dialog');
         expect(result?.element.querySelector('script, style, noscript, template')).toBeNull();
     });
+
+    it('returns the live semantic source used to create the extraction clone', () => {
+        setupDOM('<body><main><h1>Assignment</h1><script>ignore()</script></main></body>');
+        const source = document.querySelector('main') as HTMLElement;
+
+        const result = getBestContent();
+
+        expect(result?.sourceElement).toBe(source);
+        expect(result?.element).not.toBe(source);
+        expect(result?.element.tagName).toBe('MAIN');
+        expect(result?.element.querySelector('script')).toBeNull();
+    });
+
+    it('returns the live body when no usable semantic root exists', () => {
+        setupDOM('<body><article>   </article><div>Visible instructions</div></body>');
+
+        const result = getBestContent();
+
+        expect(result?.strategy).toBe('visible-body');
+        expect(result?.sourceElement).toBe(document.body);
+        expect(result?.element).not.toBe(document.body);
+    });
 });

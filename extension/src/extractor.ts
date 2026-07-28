@@ -11,6 +11,10 @@ export interface ExtractionResult {
     strategy: string;
 }
 
+export interface InitialExtractionResult extends ExtractionResult {
+    sourceElement: HTMLElement;
+}
+
 export function getReadabilityContent(): ExtractionResult | null {
     const clone = document.cloneNode(true) as Document;
     if (!document.body || !clone.body) return null;
@@ -25,21 +29,35 @@ export function getReadabilityContent(): ExtractionResult | null {
     return { element, strategy: 'readability' };
 }
 
-export function getBestContent(): ExtractionResult | null {
-    const semanticSource = extractSemanticHTML();
-    if (semanticSource) {
+export function getBestContent(): InitialExtractionResult | null {
+    const semanticSources = [
+        document.querySelector<HTMLElement>('article'),
+        document.querySelector<HTMLElement>('main'),
+        document.querySelector<HTMLElement>('[role="main"]')
+    ];
+
+    for (const semanticSource of semanticSources) {
+        if (!semanticSource) continue;
         const semanticContent = sanitizeVisibleContent(semanticSource);
-        if (semanticContent) return { element: semanticContent, strategy: 'semantic-html' };
+        if (semanticContent) {
+            return {
+                element: semanticContent,
+                sourceElement: semanticSource,
+                strategy: 'semantic-html'
+            };
+        }
     }
 
     return getVisibleBodyContent();
 }
 
-export function getVisibleBodyContent(): ExtractionResult | null {
+export function getVisibleBodyContent(): InitialExtractionResult | null {
     if (!document.body) return null;
 
     const body = sanitizeVisibleContent(document.body);
-    return body ? { element: body, strategy: 'visible-body' } : null;
+    return body
+        ? { element: body, sourceElement: document.body, strategy: 'visible-body' }
+        : null;
 }
 
 function sanitizeVisibleContent(sourceRoot: HTMLElement): HTMLElement | null {
@@ -61,8 +79,4 @@ function isNonContentElement(source: HTMLElement): boolean {
     return ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(source.tagName);
 }
 
-function extractSemanticHTML(): HTMLElement | null {
-    return document.querySelector<HTMLElement>('article')
-        || document.querySelector<HTMLElement>('main')
-        || document.querySelector<HTMLElement>('[role="main"]');
-}
+
