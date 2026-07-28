@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { StatusOrb } from './components/StatusOrb';
 import { StatusMessage } from './components/StatusMessage';
 import { ActionButtons } from './components/ActionButtons';
+import { openPreviewSession, type PreviewSession, isSupportedPageUrl } from './preview-session';
 
 interface ExtensionResponse {
   success: boolean;
@@ -19,6 +20,10 @@ export function App() {
   const [autoDownload, setAutoDownload] = useState(false);
   const [copied, setCopied] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
+  const [previewEnabled, setPreviewEnabled] = useState(true);
+  const [previewWarning, setPreviewWarning] = useState('');
+
+  const sessionRef = useRef<PreviewSession | null>(null);
 
   useEffect(() => {
     chrome.storage.local.get(['autoDownload'], (result) => {
@@ -26,6 +31,49 @@ export function App() {
         setAutoDownload(result.autoDownload);
       }
     });
+  }, []);
+
+  // Read preview preference and open session on mount
+  useEffect(() => {
+    let cancelled = false;
+
+    const initPreview = async () => {
+      try {
+        const result = await chrome.storage.local.get(['capturePreviewEnabled']);
+        // Treat only explicit false as disabled; missing value = enabled
+        const enabled = result.capturePreviewEnabled !== false;
+        if (cancelled) return;
+        setPreviewEnabled(enabled);
+
+        if (!enabled) return;
+
+        // Get the active tab
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id || !isSupportedPageUrl(tab.url)) return;
+        if (cancelled) return;
+
+        const session = await openPreviewSession(tab.id);
+        if (cancelled) {
+          session.disconnect();
+          return;
+        }
+        sessionRef.current = session;
+        session.show();
+      } catch (err) {
+        if (cancelled) return;
+        setPreviewWarning('Preview unavailable on this page');
+      }
+    };
+
+    initPreview();
+
+    return () => {
+      cancelled = true;
+      if (sessionRef.current) {
+        sessionRef.current.disconnect();
+        sessionRef.current = null;
+      }
+    };
   }, []);
 
   const sanitizeTitle = (title?: string) => {
@@ -39,6 +87,39 @@ export function App() {
     const newValue = target.checked;
     setAutoDownload(newValue);
     chrome.storage.local.set({ autoDownload: newValue });
+  };
+
+  const togglePreview = async (e: Event) => {
+    const target = e.target as HTMLInputElement;
+    const newValue = target.checked;
+    setPreviewEnabled(newValue);
+    chrome.storage.local.set({ capturePreviewEnabled: newValue });
+
+    if (!newValue) {
+      // Turning off: hide the preview immediately
+      if (sessionRef.current) {
+        sessionRef.current.hide();
+      }
+    } else {
+      // Turning on: establish session and show
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id || !isSupportedPageUrl(tab.url)) return;
+
+        // Disconnect existing session if any
+        if (sessionRef.current) {
+          sessionRef.current.disconnect();
+          sessionRef.current = null;
+        }
+
+        const session = await openPreviewSession(tab.id);
+        sessionRef.current = session;
+        session.show();
+        setPreviewWarning('');
+      } catch {
+        setPreviewWarning('Preview unavailable on this page');
+      }
+    }
   };
 
   const downloadFile = (content: string, filename: string) => {
@@ -62,6 +143,11 @@ export function App() {
     setError('');
     setMarkdown('');
 
+    // Set preview to loading state before conversion
+    if (previewEnabled && sessionRef.current) {
+      sessionRef.current.setLoading();
+    }
+
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab.id) throw new Error("No active tab found");
@@ -74,6 +160,10 @@ export function App() {
 
     } catch (err: unknown) {
       console.error(err);
+      // Restore preview ready state before showing error
+      if (previewEnabled && sessionRef.current) {
+        sessionRef.current.setReady();
+      }
       const errorMessage = err instanceof Error ? err.message : "Failed. Refresh the tab.";
       setError(errorMessage);
       setStatus('error');
@@ -82,6 +172,10 @@ export function App() {
 
   const processResponse = (response: ExtensionResponse, tab: chrome.tabs.Tab) => {
       if (response && response.success) {
+        // Hide preview before exposing Copy and Download
+        if (previewEnabled && sessionRef.current) {
+          sessionRef.current.hide();
+        }
         const safeTitle = sanitizeTitle(tab.title);
         setMarkdown(response.markdown);
         setFilename(safeTitle);
@@ -119,7 +213,7 @@ export function App() {
 
             <StatusOrb status={status} handleConvert={handleConvert} />
         
-            <StatusMessage status={status} markdownLength={markdown.length} error={error} />
+            <StatusMessage status={status} markdownLength={markdown.length} error={error} warning={previewWarning} />
 
             {/* Success Actions (Only visible on Success) */}
             {status === 'success' && (
@@ -133,7 +227,7 @@ export function App() {
 
         </main>
 
-        <Footer autoDownload={autoDownload} toggleAutoDownload={toggleAutoDownload} />
+        <Footer autoDownload={autoDownload} toggleAutoDownload={toggleAutoDownload} previewEnabled={previewEnabled} togglePreview={togglePreview} />
 
       </div>
     );

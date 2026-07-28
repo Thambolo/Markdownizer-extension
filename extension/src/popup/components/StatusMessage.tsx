@@ -4,9 +4,12 @@ interface StatusMessageProps {
   status: Status;
   markdownLength: number;
   error: string;
+  warning?: string;
 }
 
-export function StatusMessage({ status, markdownLength, error }: StatusMessageProps) {
+export function StatusMessage({ status, markdownLength, error, warning }: StatusMessageProps) {
+  const showWarning = warning && status !== 'error';
+
   return (
     <div class="text-center space-y-1 h-12 pt-2 flex flex-col items-center justify-start">
       <h2
@@ -35,6 +38,10 @@ export function StatusMessage({ status, markdownLength, error }: StatusMessagePr
         {status === 'success' && `${markdownLength} chars`}
         {status === 'error' && error}
       </p>
+
+      {showWarning && (
+        <p class="text-[10px] font-mono mt-1 text-amber-400">{warning}</p>
+      )}
     </div>
   );
 }
