@@ -46,7 +46,6 @@ chrome.runtime.onConnect.addListener((port) => {
                 }
                 currentOwner = { port, sessionId: cmd.sessionId, generation };
                 preview.show(extraction.sourceElement);
-                preview.setLoading();
                 port.postMessage({ success: true });
                 break;
             }
@@ -86,6 +85,11 @@ chrome.runtime.onConnect.addListener((port) => {
  * Main Entry Point: Listen for messages from the popup
  */
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "preview_ready") {
+        sendResponse({ success: true });
+        return false; // Synchronous response
+    }
+
     if (request.action === "convert_page") {
         processPage().then(sendResponse).catch((err) => {
             console.error("Markdownizer Error:", err);

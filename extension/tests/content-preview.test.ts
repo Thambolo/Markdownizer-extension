@@ -50,14 +50,15 @@ function createMockPort(name: string): MockPort {
 }
 
 let connectListener: RuntimeConnectListener | undefined;
+let messageListener: ((request: unknown, sender: unknown, sendResponse: (response: unknown) => void) => void) | undefined;
 
 function createChromeMock() {
     return {
         runtime: {
             onInstalled: { addListener: vi.fn() },
             onMessage: {
-                addListener: vi.fn(() => {
-                    // messageListener not needed for preview protocol tests
+                addListener: vi.fn((listener: (request: unknown, sender: unknown, sendResponse: (response: unknown) => void) => void) => {
+                    messageListener = listener;
                 })
             },
             onConnect: {
@@ -108,6 +109,7 @@ describe('Content-script preview protocol', () => {
         // @ts-expect-error – injecting global chrome for content script
         global.chrome = createChromeMock();
         connectListener = undefined;
+        messageListener = undefined;
     });
 
     afterEach(() => {
@@ -118,7 +120,7 @@ describe('Content-script preview protocol', () => {
         if (host) host.remove();
     });
 
-    it('creates overlay host on show and sets loading state', async () => {
+    it('creates overlay host on show and sets ready state', async () => {
         setupDOM('<body><main><h1>Hello</h1></main></body>');
         await import('../src/content');
 
@@ -129,7 +131,7 @@ describe('Content-script preview protocol', () => {
 
         const host = document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`);
         expect(host).not.toBeNull();
-        expect(host?.getAttribute('data-preview-state')).toBe('loading');
+        expect(host?.getAttribute('data-preview-state')).toBe('ready');
     });
 
     it('transitions to ready state', async () => {
@@ -283,5 +285,26 @@ describe('Content-script preview protocol', () => {
 
         // chrome.runtime.sendMessage should NOT have been called for conversion
         expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('responds to preview_ready action via onMessage', async () => {
+        setupDOM('<body><main><h1>Hello</h1></main></body>');
+        await import('../src/content');
+
+        // Verify the onMessage listener was registered
+        expect(messageListener).toBeDefined();
+
+        // Simulate a preview-ready message from the popup
+        const sendResponse = vi.fn();
+        const result = messageListener!(
+            { action: 'preview_ready' },
+            {},
+            sendResponse
+        );
+
+        // Should return false (synchronous response)
+        expect(result).toBe(false);
+        // sendResponse should be called with success
+        expect(sendResponse).toHaveBeenCalledWith({ success: true });
     });
 });

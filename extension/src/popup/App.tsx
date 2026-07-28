@@ -233,17 +233,6 @@ export function App() {
     );
 }
 
-function isSupportedPageUrl(url?: string): boolean {
-    if (!url) return false;
-
-    try {
-        const parsed = new URL(url);
-        return parsed.protocol === "http:" || parsed.protocol === "https:";
-    } catch {
-        return false;
-    }
-}
-
 /**
  * Ensures the content script is loaded before sending a message.
  * If the initial message fails, it attempts to inject the script and retry.

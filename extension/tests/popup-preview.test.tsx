@@ -615,9 +615,7 @@ describe('App popup lifecycle', () => {
         chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: true });
         // Content script readiness check fails (preview session can't open)
         // But convert_page should work after content script injection
-        let sendMessageCallCount = 0;
         chrome.tabs.sendMessage.mockImplementation(async (_tabId: number, msg: { action?: string }) => {
-            sendMessageCallCount++;
             if (msg?.action === 'preview_ready') {
                 // All preview_ready checks fail (1 initial + 5 retries = 6)
                 throw new Error('Receiving end does not exist');
@@ -673,7 +671,7 @@ describe('App popup lifecycle', () => {
 
         // Unmount the component
         await act(async () => {
-            render(null as any, container!);
+            render(null, container!);
         });
 
         // The port should have been disconnected (cleanup)

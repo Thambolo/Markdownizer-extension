@@ -37,12 +37,6 @@ function stubAnimationFrames() {
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
 }
 
-function flushRaf() {
-    const cbs = [...rafCallbacks];
-    rafCallbacks = [];
-    cbs.forEach(cb => cb(performance.now()));
-}
-
 describe('CapturePreview', () => {
     let preview: CapturePreview;
 
