@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { page, cdp, userEvent } from 'vitest/browser';
 import { CapturePreview, PREVIEW_HOST_ATTRIBUTE } from '../src/capture-preview';
 
@@ -23,6 +23,12 @@ function waitForTwoFrames(): Promise<void> {
 let preview: CapturePreview;
 
 beforeEach(() => {
+    // Stub chrome.runtime.getURL for badge logo
+    vi.stubGlobal('chrome', {
+        runtime: {
+            getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
+        },
+    });
     preview = new CapturePreview();
 });
 
@@ -228,5 +234,186 @@ describe('reduced motion in Chromium', () => {
 
         // Clean up media emulation
         await session.send('Emulation.setEmulatedMedia', { features: [] });
+    });
+});
+
+// ── Badge ───────────────────────────────────────────────────────────────────
+
+describe('selection badge in Chromium', () => {
+    it('positions the badge inside the boundary top-left corner', async () => {
+        const main = document.createElement('main');
+        Object.assign(main.style, {
+            position: 'absolute',
+            top: '120px',
+            left: '80px',
+            width: '400px',
+            height: '250px',
+        });
+        document.body.appendChild(main);
+
+        preview.show(main);
+        await waitForTwoFrames();
+
+        const host = document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`) as HTMLElement;
+        const badge = host.shadowRoot!.querySelector('.badge') as HTMLDivElement;
+        expect(badge).not.toBeNull();
+
+        const badgeRect = badge.getBoundingClientRect();
+        const mainRect = main.getBoundingClientRect();
+
+        // Badge must be inside the main element's top-left corner
+        expect(badgeRect.top).toBeGreaterThanOrEqual(mainRect.top);
+        expect(badgeRect.left).toBeGreaterThanOrEqual(mainRect.left);
+        expect(badgeRect.right).toBeLessThanOrEqual(mainRect.right);
+        expect(badgeRect.bottom).toBeLessThanOrEqual(mainRect.bottom);
+    });
+
+    it('contains the Markdownizer logo and Selected text', async () => {
+        const main = document.createElement('main');
+        Object.assign(main.style, {
+            position: 'absolute',
+            top: '0',
+            left: '0',
+            width: '300px',
+            height: '200px',
+        });
+        document.body.appendChild(main);
+
+        preview.show(main);
+        await waitForTwoFrames();
+
+        const host = document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`) as HTMLElement;
+        const badge = host.shadowRoot!.querySelector('.badge') as HTMLDivElement;
+        const img = badge.querySelector('img') as HTMLImageElement;
+        const span = badge.querySelector('span') as HTMLSpanElement;
+
+        expect(img).not.toBeNull();
+        expect(img.src).toContain('icons/icon16.svg');
+        expect(span).not.toBeNull();
+        expect(span.textContent).toBe('Selected');
+    });
+
+    it('resolves the packaged extension asset URL', async () => {
+        const main = document.createElement('main');
+        Object.assign(main.style, {
+            position: 'absolute',
+            top: '0',
+            left: '0',
+            width: '300px',
+            height: '200px',
+        });
+        document.body.appendChild(main);
+
+        preview.show(main);
+        await waitForTwoFrames();
+
+        const host = document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`) as HTMLElement;
+        const img = host.shadowRoot!.querySelector('.badge img') as HTMLImageElement;
+        expect(img).not.toBeNull();
+        // chrome.runtime.getURL was called with the correct asset path
+        expect(chrome.runtime.getURL).toHaveBeenCalledWith('icons/icon16.svg');
+        expect(img.src).toContain('icons/icon16.svg');
+    });
+
+    it('cannot be overridden by hostile page CSS', async () => {
+        addStyle(`
+            * { visibility: hidden !important; opacity: 0 !important; }
+            div { display: none !important; }
+        `);
+
+        const main = document.createElement('main');
+        Object.assign(main.style, {
+            position: 'absolute',
+            top: '0',
+            left: '0',
+            width: '300px',
+            height: '200px',
+        });
+        document.body.appendChild(main);
+
+        preview.show(main);
+        await waitForTwoFrames();
+
+        const host = document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`) as HTMLElement;
+        const badge = host.shadowRoot!.querySelector('.badge') as HTMLDivElement;
+        const computed = getComputedStyle(badge);
+
+        expect(computed.visibility).toBe('visible');
+        expect(computed.opacity).not.toBe('0');
+    });
+
+    it('remains visible during loading shimmer', async () => {
+        const main = document.createElement('main');
+        Object.assign(main.style, {
+            position: 'absolute',
+            top: '0',
+            left: '0',
+            width: '300px',
+            height: '200px',
+        });
+        document.body.appendChild(main);
+
+        preview.show(main);
+        await waitForTwoFrames();
+
+        preview.setLoading();
+        await waitForTwoFrames();
+
+        const host = document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`) as HTMLElement;
+        const badge = host.shadowRoot!.querySelector('.badge') as HTMLDivElement;
+        expect(badge).not.toBeNull();
+
+        const computed = getComputedStyle(badge);
+        expect(computed.visibility).toBe('visible');
+        expect(badge.querySelector('span')!.textContent).toBe('Selected');
+    });
+
+    it('does not intercept clicks beneath the preview', async () => {
+        const main = document.createElement('main');
+        Object.assign(main.style, {
+            position: 'absolute',
+            top: '0',
+            left: '0',
+            width: '400px',
+            height: '300px',
+        });
+        document.body.appendChild(main);
+
+        let clicked = false;
+        const btn = document.createElement('button');
+        btn.textContent = 'Click me';
+        btn.addEventListener('click', () => { clicked = true; });
+        main.appendChild(btn);
+
+        preview.show(main);
+        await waitForTwoFrames();
+
+        // The badge is inside the shadow DOM with pointer-events: none on the host
+        await userEvent.click(btn);
+        expect(clicked).toBe(true);
+    });
+
+    it('does not change the selected element dimensions or boundary geometry', async () => {
+        const main = document.createElement('main');
+        Object.assign(main.style, {
+            position: 'absolute',
+            top: '50px',
+            left: '50px',
+            width: '350px',
+            height: '180px',
+        });
+        document.body.appendChild(main);
+
+        const before = main.getBoundingClientRect();
+
+        preview.show(main);
+        await waitForTwoFrames();
+
+        const after = main.getBoundingClientRect();
+
+        expect(after.width).toBe(before.width);
+        expect(after.height).toBe(before.height);
+        expect(after.top).toBe(before.top);
+        expect(after.left).toBe(before.left);
     });
 });

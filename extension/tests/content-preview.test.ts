@@ -68,7 +68,8 @@ function createChromeMock() {
             },
             sendMessage: vi.fn(async () => {
                 return { success: true, markdown_skeleton: '# Test' };
-            })
+            }),
+            getURL: vi.fn((path: string) => `chrome-extension://test/${path}`)
         }
     };
 }

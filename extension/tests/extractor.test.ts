@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { CapturePreview, PREVIEW_HOST_ATTRIBUTE } from '../src/capture-preview';
 import { getBestContent, getVisibleBodyContent } from '../src/extractor';
@@ -25,6 +25,14 @@ function setupDOM(html: string): void {
     }
     if (!global.cancelAnimationFrame) {
         global.cancelAnimationFrame = (id: number) => clearTimeout(id);
+    }
+    // Stub chrome.runtime.getURL for CapturePreview badge logo
+    if (!global.chrome) {
+        global.chrome = {
+            runtime: {
+                getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
+            },
+        } as unknown as typeof chrome;
     }
 }
 

@@ -22,6 +22,32 @@ const STYLES = `
     outline: 2px solid #6366f1;
     background: rgba(99, 102, 241, 0.08);
 }
+.badge {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 24px;
+    padding: 4px 8px;
+    background: #0f172a;
+    border: 1px solid #6366f1;
+    border-radius: 6px;
+    pointer-events: none;
+    white-space: nowrap;
+    visibility: visible;
+}
+.badge img {
+    width: 14px;
+    height: 14px;
+    display: block;
+}
+.badge span {
+    font-size: 11px;
+    font-weight: 600;
+    color: #c7d2fe;
+}
 :host([data-preview-state="loading"]) .layer {
     animation: mdz-shimmer 1.5s ease-in-out infinite;
 }
@@ -41,6 +67,7 @@ const STYLES = `
 export class CapturePreview {
     private host: HTMLElement | null = null;
     private layer: HTMLDivElement | null = null;
+    private badge: HTMLDivElement | null = null;
     private root: HTMLElement | null = null;
 
     private rafId: number | null = null;
@@ -69,10 +96,25 @@ export class CapturePreview {
         layer.className = 'layer';
         shadow.appendChild(layer);
 
+        const badge = document.createElement('div');
+        badge.className = 'badge';
+
+        const img = document.createElement('img');
+        img.src = chrome.runtime.getURL('icons/icon16.svg');
+        img.alt = '';
+        badge.appendChild(img);
+
+        const label = document.createElement('span');
+        label.textContent = 'Selected';
+        badge.appendChild(label);
+
+        layer.appendChild(badge);
+
         document.documentElement.appendChild(host);
 
         this.host = host;
         this.layer = layer;
+        this.badge = badge;
 
         this.startTracking();
     }
@@ -97,6 +139,7 @@ export class CapturePreview {
         }
         this.host = null;
         this.layer = null;
+        this.badge = null;
         this.root = null;
     }
 

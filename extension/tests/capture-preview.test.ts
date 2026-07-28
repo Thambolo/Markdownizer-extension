@@ -43,6 +43,11 @@ describe('CapturePreview', () => {
     beforeEach(() => {
         vi.stubGlobal('ResizeObserver', StubResizeObserver);
         vi.stubGlobal('MutationObserver', StubMutationObserver);
+        vi.stubGlobal('chrome', {
+            runtime: {
+                getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
+            },
+        });
         stubAnimationFrames();
         preview = new CapturePreview();
     });
@@ -128,5 +133,78 @@ describe('CapturePreview', () => {
 
         expect(() => preview.setLoading()).not.toThrow();
         expect(() => preview.setReady()).not.toThrow();
+    });
+
+    it('creates exactly one badge inside the shadow DOM with the logo and Selected text', () => {
+        const root = document.createElement('div');
+        document.body.appendChild(root);
+
+        preview.show(root);
+
+        const host = document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`)!;
+        const layer = host.shadowRoot!.querySelector('.layer')!;
+        const badges = layer.querySelectorAll('.badge');
+
+        expect(badges.length).toBe(1);
+
+        const badge = badges[0] as HTMLDivElement;
+        const img = badge.querySelector('img') as HTMLImageElement;
+        const span = badge.querySelector('span') as HTMLSpanElement;
+
+        expect(img).not.toBeNull();
+        expect(img.src).toContain('icons/icon16.svg');
+        expect(span).not.toBeNull();
+        expect(span.textContent).toBe('Selected');
+    });
+
+    it('replaces the prior badge on repeated show() calls', () => {
+        const root = document.createElement('div');
+        document.body.appendChild(root);
+
+        preview.show(root);
+        const firstBadge = document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`)!.shadowRoot!.querySelector('.badge')!;
+
+        preview.show(root);
+        const secondBadge = document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`)!.shadowRoot!.querySelector('.badge')!;
+
+        expect(firstBadge).not.toBe(secondBadge);
+        expect(document.querySelectorAll(`[${PREVIEW_HOST_ATTRIBUTE}]`).length).toBe(1);
+    });
+
+    it('preserves the badge through setLoading and setReady', () => {
+        const root = document.createElement('div');
+        document.body.appendChild(root);
+
+        preview.show(root);
+        const badgeBefore = document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`)!.shadowRoot!.querySelector('.badge')!;
+
+        preview.setLoading();
+        const badgeDuring = document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`)!.shadowRoot!.querySelector('.badge')!;
+
+        preview.setReady();
+        const badgeAfter = document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`)!.shadowRoot!.querySelector('.badge')!;
+
+        expect(badgeBefore).toBe(badgeDuring);
+        expect(badgeDuring).toBe(badgeAfter);
+    });
+
+    it('removes the badge together with the host on remove()', () => {
+        const root = document.createElement('div');
+        document.body.appendChild(root);
+
+        preview.show(root);
+        expect(document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`)).not.toBeNull();
+
+        preview.remove();
+        expect(document.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`)).toBeNull();
+    });
+
+    it('does not throw when removing after repeated removal', () => {
+        const root = document.createElement('div');
+        document.body.appendChild(root);
+
+        preview.show(root);
+        preview.remove();
+        expect(() => preview.remove()).not.toThrow();
     });
 });
