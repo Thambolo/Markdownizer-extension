@@ -1,12 +1,86 @@
 import { getBestContent, getReadabilityContent } from './extractor';
 import { skeletonize, rehydrateMarkdown } from './logic';
 import { shouldUseReadability } from './payload';
+import { CapturePreview } from './capture-preview';
+import {
+    PREVIEW_PORT_NAME,
+    type PreviewCommand,
+} from './preview-protocol';
 
 interface BackgroundConversionResponse {
     success: boolean;
     markdown_skeleton?: string;
     error?: string;
 }
+
+// ── Preview Protocol ──────────────────────────────────────────────────────────
+
+const preview = new CapturePreview();
+
+interface OwnerState {
+    port: chrome.runtime.Port;
+    sessionId: string;
+    generation: number;
+}
+
+let nextGeneration = 0;
+let currentOwner: OwnerState | null = null;
+
+chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== PREVIEW_PORT_NAME) return;
+
+    const generation = nextGeneration++;
+
+    const handleMessage = (msg: unknown) => {
+        const cmd = msg as PreviewCommand;
+
+        switch (cmd.type) {
+            case 'preview:show': {
+                const extraction = getBestContent();
+                if (!extraction) {
+                    port.postMessage({
+                        success: false,
+                        error: 'No visible source element found.',
+                    });
+                    return;
+                }
+                currentOwner = { port, sessionId: cmd.sessionId, generation };
+                preview.show(extraction.sourceElement);
+                preview.setLoading();
+                port.postMessage({ success: true });
+                break;
+            }
+            default: {
+                // Only the current generation may change state or remove
+                if (!currentOwner || currentOwner.generation !== generation) return;
+
+                if (cmd.type === 'preview:loading') {
+                    preview.setLoading();
+                } else if (cmd.type === 'preview:ready') {
+                    preview.setReady();
+                } else if (cmd.type === 'preview:hide') {
+                    preview.remove();
+                    currentOwner = null;
+                }
+                break;
+            }
+        }
+    };
+
+    const handleDisconnect = () => {
+        port.onMessage.removeListener(handleMessage);
+        // Only the current generation cleans up
+        if (currentOwner && currentOwner.generation === generation) {
+            preview.remove();
+            currentOwner = null;
+        }
+    };
+
+    port.onMessage.addListener(handleMessage);
+    port.onDisconnect.addListener(handleDisconnect);
+});
+
+// ── Page Conversion (popup) ───────────────────────────────────────────────────
 
 /**
  * Main Entry Point: Listen for messages from the popup
