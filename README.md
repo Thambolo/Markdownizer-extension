@@ -47,11 +47,9 @@ Most web clippers process readable content on third-party servers. Markdownizer 
 
 1.  Navigate to the webpage you want to convert.
 2.  Click the **Markdownizer** icon in your browser toolbar.
-3.  A preview outline appears on the page showing the content region that will be converted. This is the same region used by Smart Extraction (article, main, or the visible body).
-4.  Toggle the **Preview** checkbox in the footer to show or hide the outline. This preference persists across sessions.
-5.  Click **Start** to begin conversion. The outline changes to a loading shimmer while the page is being processed.
-6.  Use the **Copy** or **Download** buttons to retrieve your Markdown.
-7.  Paste the result into your preferred LLM.
+3.  Wait for the analysis to complete.
+4.  Use the **Copy** or **Download** buttons to retrieve your Markdown.
+5.  Paste the result into your preferred LLM.
 
 ## Capture Preview
 
