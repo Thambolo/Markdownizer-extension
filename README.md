@@ -24,7 +24,6 @@ Most web clippers process readable content on third-party servers. Markdownizer 
 *   **Smart Extraction**: Prioritizes main content and handles complex code blocks using an integrated `readability.js` engine.
 *   **Structure Preservation**: Keeps useful headings, lists, tables, and code blocks readable.
 *   **Capture Preview**: Shows an outline around the content region that will be converted, so you can verify the extraction target before you commit to the conversion.
-*   **Persistent Control**: Your preview preference is remembered across sessions and page loads.
 
 ## Installation
 
