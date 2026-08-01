@@ -16,7 +16,7 @@ export function Footer({
       <div class="flex w-full flex-col items-stretch gap-3 text-left">
         <Toggle
           id="capture-preview-toggle"
-          label="Preview"
+          label="Preview selection"
           checked={previewEnabled}
           onChange={togglePreview}
         />
