@@ -260,7 +260,7 @@ export function App() {
  * Ensures the content script is loaded before sending a message.
  * If the initial message fails, it attempts to inject the script and retry.
  */
-async function ensureContentScriptLoaded(tabId: number, captureMode?: CaptureMode): Promise<ExtensionResponse> {
+async function ensureContentScriptLoaded(tabId: number, captureMode: CaptureMode): Promise<ExtensionResponse> {
     try {
         return await chrome.tabs.sendMessage(tabId, { action: "convert_page", captureMode });
     } catch (e: unknown) {

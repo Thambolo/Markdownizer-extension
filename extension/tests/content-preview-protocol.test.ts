@@ -479,6 +479,22 @@ describe('Content-script preview protocol', () => {
         }));
     });
 
+    it('passes captureMode full-page in the convert_page message', async () => {
+        setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
+        await import('../src/content');
+
+        const sendRequest = new Promise<unknown>((resolve) => {
+            messageListener!(
+                { action: 'convert_page', captureMode: 'full-page' },
+                {},
+                resolve,
+            );
+        });
+
+        const response = await sendRequest;
+        expect(response).toEqual(expect.objectContaining({ success: true }));
+    });
+
     it('converts a default request without captureMode using semantic strategy', async () => {
         setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
         await import('../src/content');
@@ -517,6 +533,25 @@ describe('Content-script preview protocol', () => {
             success: false,
             error: 'The full page is too large to convert. Turn off Capture full page to use Smart selection.',
         });
+        expect(readabilitySpy).not.toHaveBeenCalled();
+    });
+
+    it('does not invoke Readability for full-page even when skeleton is below size limit', async () => {
+        setupDOM('<body><main>Small content</main><aside>Also small</aside></body>');
+        skeletonizeMock.mockReturnValue({ html: '<p>Tiny</p>', tokens: [] });
+        const extractor = await import('../src/extractor');
+        const readabilitySpy = vi.spyOn(extractor, 'getReadabilityContent');
+        await import('../src/content');
+
+        const response = await new Promise<unknown>((resolve) => {
+            messageListener!(
+                { action: 'convert_page', captureMode: 'full-page' },
+                {},
+                resolve,
+            );
+        });
+
+        expect(response).toEqual(expect.objectContaining({ success: true }));
         expect(readabilitySpy).not.toHaveBeenCalled();
     });
 });

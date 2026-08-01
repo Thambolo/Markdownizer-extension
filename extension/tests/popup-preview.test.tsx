@@ -277,7 +277,7 @@ describe('openPreviewSession', () => {
 
         expect(lastPort).not.toBeNull();
         expect(lastPort!.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({ type: 'preview:show', sessionId: expect.any(String) })
+            expect.objectContaining({ type: 'preview:show', sessionId: expect.any(String), captureMode: 'smart' })
         );
         session.disconnect();
     });
@@ -693,6 +693,54 @@ describe('App popup lifecycle', () => {
 
         // The port should have been disconnected (cleanup)
         expect(port.disconnect).toHaveBeenCalled();
+    });
+
+    it('sends convert_page with captureMode full-page when capture full page is enabled', async () => {
+        chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true, markdown: '# Done' });
+
+        let container: HTMLDivElement;
+        await act(async () => {
+            container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // Enable capture full page
+        const captureFullPageToggle = document.querySelector('#capture-full-page-toggle') as HTMLInputElement;
+        expect(captureFullPageToggle).not.toBeNull();
+
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(captureFullPageToggle, true);
+            captureFullPageToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // Clear previous calls
+        chrome.tabs.sendMessage.mockClear();
+
+        // Click Start to trigger conversion
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => {
+            startButton.click();
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 100));
+        });
+
+        // The convert_page message should carry captureMode: 'full-page'
+        expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
+            expect.any(Number),
+            expect.objectContaining({ action: 'convert_page', captureMode: 'full-page' })
+        );
     });
 });
 

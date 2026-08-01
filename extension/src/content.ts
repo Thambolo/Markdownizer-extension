@@ -115,7 +115,7 @@ async function processPage(captureMode: CaptureMode) {
         throw new Error('The full page is too large to convert. Turn off Capture full page to use Smart selection.');
     }
 
-    if (shouldUseReadability(skeleton.html)) {
+    if (shouldUseReadability(skeleton.html) && captureMode === 'smart') {
         extraction = getReadabilityContent();
         if (!extraction) throw new Error('Could not reduce page content to the supported size.');
         skeleton = skeletonize(extraction.element);
