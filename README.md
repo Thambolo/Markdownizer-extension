@@ -50,10 +50,6 @@ Most web clippers process readable content on third-party servers. Markdownizer 
 4.  Use the **Copy** or **Download** buttons to retrieve your Markdown.
 5.  Paste the result into your preferred LLM.
 
-## Capture Preview
-
-When you open Markdownizer, visible text across the page is highlighted and boxed indicators appear around images and interactive controls that will be captured. This gives you a quick way to verify the extraction target before starting conversion.
-
 ## Development Setup
 
 Built with **Vite**, **Preact**, **TypeScript**, and **Tailwind CSS**.
