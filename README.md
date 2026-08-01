@@ -24,6 +24,7 @@ Most web clippers process readable content on third-party servers. Markdownizer 
 *   **Smart Extraction**: Prioritizes main content and handles complex code blocks using an integrated `readability.js` engine.
 *   **Structure Preservation**: Keeps useful headings, lists, tables, and code blocks readable.
 *   **Capture Preview**: Highlights visible text, images, and interactive controls expected in conversion, so you can verify what will be captured before committing.
+*   **Capture Full Page**: Temporarily previews and converts the entire visible body when Smart selection is too narrow. The setting resets to Smart selection each time the popup reopens. If the full page exceeds the skeleton size limit, the extension asks you to return to Smart selection.
 
 ## Installation
 

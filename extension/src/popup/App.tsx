@@ -24,6 +24,7 @@ export function App() {
   const [previewEnabled, setPreviewEnabled] = useState(true);
   const [previewWarning, setPreviewWarning] = useState('');
   const [captureMode, setCaptureMode] = useState<CaptureMode>('smart');
+  const captureModeRef = useRef<CaptureMode>('smart');
 
   const sessionRef = useRef<PreviewSession | null>(null);
 
@@ -60,7 +61,7 @@ export function App() {
           return;
         }
         sessionRef.current = session;
-        session.show(captureMode);
+        session.show(captureModeRef.current);
       } catch (err) {
         if (cancelled) return;
         setPreviewWarning('Preview unavailable on this page');
@@ -116,7 +117,7 @@ export function App() {
 
         const session = await openPreviewSession(tab.id);
         sessionRef.current = session;
-        session.show(captureMode);
+        session.show(captureModeRef.current);
         setPreviewWarning('');
       } catch {
         setPreviewWarning('Preview unavailable on this page');
@@ -129,6 +130,7 @@ export function App() {
     const newValue = target.checked;
     const newMode: CaptureMode = newValue ? 'full-page' : 'smart';
     setCaptureMode(newMode);
+    captureModeRef.current = newMode;
     
     // If preview is enabled and session exists, show with new mode immediately
     if (previewEnabled && sessionRef.current) {
