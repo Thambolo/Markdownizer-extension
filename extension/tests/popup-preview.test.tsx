@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { PREVIEW_PORT_NAME } from '../src/preview-protocol';
+import { PREVIEW_PORT_NAME, type CaptureMode } from '../src/preview-protocol';
 
 // ── Chrome API Mocks ──────────────────────────────────────────────────────────
 
@@ -158,7 +158,7 @@ describe('openPreviewSession', () => {
     let chrome: ReturnType<typeof createChromeMock>;
 
     interface PreviewSession {
-        show(): void;
+        show(captureMode: CaptureMode): void;
         setLoading(): void;
         setReady(): void;
         hide(): void;
@@ -196,8 +196,8 @@ describe('openPreviewSession', () => {
         const port2 = lastPort; // Capture second session's port
 
         // Trigger a message on each session to populate postMessage calls
-        session1.show();
-        session2.show();
+        session1.show('smart');
+        session2.show('smart');
 
         // Extract session IDs from the postMessage calls
         const sessionId1 = port1!.postMessage.mock.calls[0][0].sessionId;
@@ -273,7 +273,7 @@ describe('openPreviewSession', () => {
         chrome.tabs.sendMessage.mockResolvedValue({ success: true });
 
         const session = await openPreviewSession(42);
-        session.show();
+        session.show('smart');
 
         expect(lastPort).not.toBeNull();
         expect(lastPort!.postMessage).toHaveBeenCalledWith(
@@ -336,7 +336,7 @@ describe('openPreviewSession', () => {
         session.disconnect();
 
         // These should not throw
-        expect(() => session.show()).not.toThrow();
+        expect(() => session.show('smart')).not.toThrow();
         expect(() => session.setLoading()).not.toThrow();
         expect(() => session.setReady()).not.toThrow();
         expect(() => session.hide()).not.toThrow();
@@ -350,7 +350,7 @@ describe('openPreviewSession', () => {
         chrome.tabs.sendMessage.mockResolvedValue({ success: true });
 
         const session = await openPreviewSession(42);
-        session.show();
+        session.show('smart');
 
         expect(lastPort!.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({ sessionId: mockUUID })

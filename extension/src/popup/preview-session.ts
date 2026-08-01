@@ -3,7 +3,7 @@ import { PREVIEW_PORT_NAME, type CaptureMode } from '../preview-protocol';
 // ── Public Types ──────────────────────────────────────────────────────────────
 
 export interface PreviewSession {
-    show(captureMode?: CaptureMode): void;
+    show(captureMode: CaptureMode): void;
     setLoading(): void;
     setReady(): void;
     hide(): void;
@@ -94,7 +94,7 @@ export async function openPreviewSession(tabId: number): Promise<PreviewSession>
     };
 
     return {
-        show: (captureMode?: CaptureMode) => send('preview:show', captureMode),
+        show: (captureMode: CaptureMode) => send('preview:show', captureMode),
         setLoading: () => send('preview:loading'),
         setReady: () => send('preview:ready'),
         hide: () => send('preview:hide'),
