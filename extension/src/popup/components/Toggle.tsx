@@ -3,16 +3,18 @@ export interface ToggleProps {
     label: string;
     checked: boolean;
     onChange: (event: Event) => void;
+    description?: string;
 }
 
-export function Toggle({ id, label, checked, onChange }: ToggleProps): JSX.Element {
+export function Toggle({ id, label, checked, onChange, description }: ToggleProps): JSX.Element {
     return (
         <label
             htmlFor={id}
             class="flex w-full items-center justify-between gap-4 cursor-pointer"
         >
-            <span class="text-left text-xs text-slate-400 hover:text-slate-300 transition-colors">
-                {label}
+            <span class="text-left">
+                <span class="block text-xs text-slate-400 hover:text-slate-300 transition-colors">{label}</span>
+                {description && <span class="mt-0.5 block text-[11px] text-slate-500">{description}</span>}
             </span>
             <span class="relative inline-flex shrink-0 items-center">
                 <input

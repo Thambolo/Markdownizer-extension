@@ -1,9 +1,9 @@
-import { PREVIEW_PORT_NAME } from '../preview-protocol';
+import { PREVIEW_PORT_NAME, type CaptureMode } from '../preview-protocol';
 
 // ── Public Types ──────────────────────────────────────────────────────────────
 
 export interface PreviewSession {
-    show(): void;
+    show(captureMode?: CaptureMode): void;
     setLoading(): void;
     setReady(): void;
     hide(): void;
@@ -84,13 +84,17 @@ export async function openPreviewSession(tabId: number): Promise<PreviewSession>
 
     let disconnected = false;
 
-    const send = (type: string) => {
+    const send = (type: string, captureMode?: CaptureMode) => {
         if (disconnected) return;
-        port.postMessage({ type, sessionId });
+        const message: Record<string, unknown> = { type, sessionId };
+        if (captureMode) {
+            message.captureMode = captureMode;
+        }
+        port.postMessage(message);
     };
 
     return {
-        show: () => send('preview:show'),
+        show: (captureMode?: CaptureMode) => send('preview:show', captureMode),
         setLoading: () => send('preview:loading'),
         setReady: () => send('preview:ready'),
         hide: () => send('preview:hide'),

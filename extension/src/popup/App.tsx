@@ -5,6 +5,7 @@ import { StatusOrb } from './components/StatusOrb';
 import { StatusMessage } from './components/StatusMessage';
 import { ActionButtons } from './components/ActionButtons';
 import { injectContentScript, openPreviewSession, type PreviewSession, isSupportedPageUrl } from './preview-session';
+import type { CaptureMode } from '../preview-protocol';
 
 interface ExtensionResponse {
   success: boolean;
@@ -22,6 +23,7 @@ export function App() {
   const [downloaded, setDownloaded] = useState(false);
   const [previewEnabled, setPreviewEnabled] = useState(true);
   const [previewWarning, setPreviewWarning] = useState('');
+  const [captureMode, setCaptureMode] = useState<CaptureMode>('smart');
 
   const sessionRef = useRef<PreviewSession | null>(null);
 
@@ -58,7 +60,7 @@ export function App() {
           return;
         }
         sessionRef.current = session;
-        session.show();
+        session.show(captureMode);
       } catch (err) {
         if (cancelled) return;
         setPreviewWarning('Preview unavailable on this page');
@@ -114,11 +116,23 @@ export function App() {
 
         const session = await openPreviewSession(tab.id);
         sessionRef.current = session;
-        session.show();
+        session.show(captureMode);
         setPreviewWarning('');
       } catch {
         setPreviewWarning('Preview unavailable on this page');
       }
+    }
+  };
+
+  const toggleCaptureFullPage = (e: Event) => {
+    const target = e.target as HTMLInputElement;
+    const newValue = target.checked;
+    const newMode: CaptureMode = newValue ? 'full-page' : 'smart';
+    setCaptureMode(newMode);
+    
+    // If preview is enabled and session exists, show with new mode immediately
+    if (previewEnabled && sessionRef.current) {
+      sessionRef.current.show(newMode);
     }
   };
 
@@ -155,7 +169,7 @@ export function App() {
         throw new Error("Open a normal webpage first. Markdownizer cannot run on browser settings, extension pages, or internal URLs.");
       }
 
-      const response = await ensureContentScriptLoaded(tab.id);
+      const response = await ensureContentScriptLoaded(tab.id, captureMode);
       processResponse(response, tab);
 
     } catch (err: unknown) {
@@ -227,7 +241,14 @@ export function App() {
 
         </main>
 
-        <Footer autoDownload={autoDownload} toggleAutoDownload={toggleAutoDownload} previewEnabled={previewEnabled} togglePreview={togglePreview} />
+        <Footer 
+          autoDownload={autoDownload} 
+          toggleAutoDownload={toggleAutoDownload} 
+          previewEnabled={previewEnabled} 
+          togglePreview={togglePreview} 
+          captureFullPage={captureMode === 'full-page'}
+          toggleCaptureFullPage={toggleCaptureFullPage}
+        />
 
       </div>
     );
@@ -237,9 +258,9 @@ export function App() {
  * Ensures the content script is loaded before sending a message.
  * If the initial message fails, it attempts to inject the script and retry.
  */
-async function ensureContentScriptLoaded(tabId: number): Promise<ExtensionResponse> {
+async function ensureContentScriptLoaded(tabId: number, captureMode?: CaptureMode): Promise<ExtensionResponse> {
     try {
-        return await chrome.tabs.sendMessage(tabId, { action: "convert_page" });
+        return await chrome.tabs.sendMessage(tabId, { action: "convert_page", captureMode });
     } catch (e: unknown) {
         // If messaging fails, the script might not be injected (e.g. extension updated or fresh tab)
         await injectContentScript(tabId);
@@ -249,7 +270,7 @@ async function ensureContentScriptLoaded(tabId: number): Promise<ExtensionRespon
         for (let i = 0; i < 5; i++) {
             await new Promise(resolve => setTimeout(resolve, 200));
             try {
-                return await chrome.tabs.sendMessage(tabId, { action: "convert_page" });
+                return await chrome.tabs.sendMessage(tabId, { action: "convert_page", captureMode });
             } catch (err) {
                 lastError = err;
             }

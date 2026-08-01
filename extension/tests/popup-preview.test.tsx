@@ -847,3 +847,283 @@ describe('Toggle component', () => {
         expect(label.className).toContain('justify-between');
     });
 });
+
+// ── Capture Full Page Toggle Tests ───────────────────────────────────────────
+
+describe('Capture full page toggle', () => {
+    let chrome: ReturnType<typeof createChromeMock>;
+    let App: typeof import('../src/popup/App').App;
+    let render: typeof import('preact').render;
+    let act: typeof import('preact/test-utils').act;
+
+    beforeEach(async () => {
+        chrome = createChromeMock();
+        vi.stubGlobal('chrome', chrome);
+
+        // Stub the clipboard API
+        vi.stubGlobal('navigator', {
+            clipboard: {
+                writeText: vi.fn(async () => {}),
+            },
+        });
+
+        // Ensure document.body exists for Preact render
+        if (!document.body) {
+            document.body = document.createElement('body');
+        }
+        document.body.innerHTML = '<div id="app"></div>';
+
+        vi.resetModules();
+        const preact = await import('preact');
+        const testUtils = await import('preact/test-utils');
+        render = preact.render;
+        act = testUtils.act;
+        const appMod = await import('../src/popup/App');
+        App = appMod.App;
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        vi.restoreAllMocks();
+    });
+
+    it('renders capture full page toggle with description', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // Assert the toggle exists
+        expect(document.querySelector('#capture-full-page-toggle')).not.toBeNull();
+        // Assert the label text
+        expect(document.body.textContent).toContain('Capture full page');
+        // Assert the description text
+        expect(document.body.textContent).toContain('Default: Smart selection');
+    });
+
+    it('creates first preview session with captureMode smart', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // The session should be opened
+        expect(chrome.tabs.connect).toHaveBeenCalled();
+        const port = lastPort;
+        expect(port).not.toBeNull();
+        
+        // The first show() call should include captureMode: 'smart'
+        expect(port!.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'preview:show', captureMode: 'smart' })
+        );
+    });
+
+    it('does not persist capture mode to storage', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // Check that storage.set was NOT called with a capture-mode key
+        const storageSetCalls = chrome.storage.local.set.mock.calls;
+        for (const call of storageSetCalls) {
+            const keys = Object.keys(call[0]);
+            expect(keys).not.toContain('captureMode');
+            expect(keys).not.toContain('captureFullPage');
+        }
+    });
+
+    it('toggles to full-page mode and sends preview:show with captureMode full-page', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        const port = lastPort!;
+        port.postMessage.mockClear(); // Clear initial show() call
+
+        // Find the capture full page toggle
+        const captureFullPageToggle = document.querySelector('#capture-full-page-toggle') as HTMLInputElement;
+        expect(captureFullPageToggle).not.toBeNull();
+
+        // Toggle it on
+        await act(async () => {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                HTMLInputElement.prototype, 'checked'
+            )!.set!;
+            nativeInputValueSetter.call(captureFullPageToggle, true);
+            captureFullPageToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // Should send preview:show with captureMode: 'full-page'
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'preview:show', captureMode: 'full-page' })
+        );
+    });
+
+    it('does not send show message when preview is disabled', async () => {
+        chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: false });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // Session should not be opened when preview is disabled
+        expect(chrome.tabs.connect).not.toHaveBeenCalled();
+    });
+
+    it('sends show message only when preview is enabled and toggle changes', async () => {
+        chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        const port = lastPort!;
+        port.postMessage.mockClear(); // Clear initial show() call
+
+        // Find the preview toggle and disable it
+        const previewToggle = document.querySelector('#capture-preview-toggle') as HTMLInputElement;
+        await act(async () => {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                HTMLInputElement.prototype, 'checked'
+            )!.set!;
+            nativeInputValueSetter.call(previewToggle, false);
+            previewToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // Now toggle capture full page
+        const captureFullPageToggle = document.querySelector('#capture-full-page-toggle') as HTMLInputElement;
+        await act(async () => {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                HTMLInputElement.prototype, 'checked'
+            )!.set!;
+            nativeInputValueSetter.call(captureFullPageToggle, true);
+            captureFullPageToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // No show message should be sent because preview is disabled
+        expect(port.postMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'preview:show' })
+        );
+    });
+
+    it('re-enables preview sends show with current capture mode', async () => {
+        chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        const port = lastPort!;
+        port.postMessage.mockClear(); // Clear initial show() call
+
+        // Toggle capture full page on
+        const captureFullPageToggle = document.querySelector('#capture-full-page-toggle') as HTMLInputElement;
+        await act(async () => {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                HTMLInputElement.prototype, 'checked'
+            )!.set!;
+            nativeInputValueSetter.call(captureFullPageToggle, true);
+            captureFullPageToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // Should have sent show with full-page mode
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'preview:show', captureMode: 'full-page' })
+        );
+
+        // Now disable preview
+        const previewToggle = document.querySelector('#capture-preview-toggle') as HTMLInputElement;
+        await act(async () => {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                HTMLInputElement.prototype, 'checked'
+            )!.set!;
+            nativeInputValueSetter.call(previewToggle, false);
+            previewToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // Re-enable preview
+        await act(async () => {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                HTMLInputElement.prototype, 'checked'
+            )!.set!;
+            nativeInputValueSetter.call(previewToggle, true);
+            previewToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // Should send show with the current capture mode (full-page)
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'preview:show', captureMode: 'full-page' })
+        );
+    });
+});
