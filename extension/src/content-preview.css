@@ -1,0 +1,15 @@
+::highlight(markdownizer-preview-ready) {
+  background-color: rgba(16, 185, 129, 0.24);
+  text-decoration-line: underline;
+  text-decoration-color: rgba(5, 150, 105, 0.9);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+
+::highlight(markdownizer-preview-loading) {
+  background-color: rgba(16, 185, 129, 0.38);
+  text-decoration-line: underline;
+  text-decoration-color: rgb(5, 150, 105);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}

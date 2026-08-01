@@ -1,8 +1,99 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { CapturePreview, PREVIEW_HOST_ATTRIBUTE } from '../src/capture-preview';
+import { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE } from '../src/content-preview';
 import { getBestContent, getVisibleBodyContent } from '../src/extractor';
 import { skeletonize } from '../src/logic';
+
+// ── Stubs for ContentPreview browser APIs in JSDOM ───────────────────────────
+
+const VISIBLE_RECT: DOMRect = { x: 10, y: 10, width: 200, height: 50, top: 10, right: 210, bottom: 60, left: 10 } as DOMRect;
+
+function createRectList(rects: DOMRect[]): DOMRectList {
+    const list = rects.slice();
+    Object.defineProperty(list, 'length', { value: rects.length });
+    return list as unknown as DOMRectList;
+}
+
+const EMPTY_RECT_LIST: DOMRectList = createRectList([]);
+
+let origRangeGetClientRects: typeof Range.prototype.getClientRects | undefined;
+let origElementGetClientRects: typeof Element.prototype.getClientRects | undefined;
+let origGetComputedStyle: typeof window.getComputedStyle | undefined;
+
+let origMO: typeof MutationObserver | undefined;
+let origRO: typeof ResizeObserver | undefined;
+let origRaf: typeof requestAnimationFrame | undefined;
+let origCaf: typeof cancelAnimationFrame | undefined;
+
+function stubContentPreviewAPIs(): void {
+    const W = global.window as unknown as Window & typeof globalThis;
+    origRangeGetClientRects = Range.prototype.getClientRects;
+    origElementGetClientRects = Element.prototype.getClientRects;
+    origGetComputedStyle = window.getComputedStyle;
+    origMO = global.MutationObserver;
+    origRO = global.ResizeObserver;
+    origRaf = global.requestAnimationFrame;
+    origCaf = global.cancelAnimationFrame;
+
+    const JSDOMRange = W.Range;
+    const JSDOMElement = W.Element;
+
+    if (JSDOMRange) {
+        JSDOMRange.prototype.getClientRects = function () {
+            const text = this.toString();
+            if (text && text.trim().length > 0) {
+                return createRectList([VISIBLE_RECT]);
+            }
+            return EMPTY_RECT_LIST;
+        };
+    }
+
+    if (JSDOMElement) {
+        JSDOMElement.prototype.getClientRects = function () {
+            return createRectList([VISIBLE_RECT]);
+        };
+    }
+
+    window.getComputedStyle = function () {
+        return {
+            get display() { return 'block'; },
+            get visibility() { return 'visible'; },
+            get opacity() { return '1'; },
+            get content() { return 'none'; },
+        } as unknown as CSSStyleDeclaration;
+    };
+
+    // Stub MutationObserver and ResizeObserver for ContentPreview
+    global.MutationObserver = class {
+        observe() {}
+        disconnect() {}
+        takeRecords() { return []; }
+    } as unknown as typeof MutationObserver;
+
+    global.ResizeObserver = class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+    } as unknown as typeof ResizeObserver;
+
+    // Stub requestAnimationFrame/cancelAnimationFrame
+    let rafId = 0;
+    global.requestAnimationFrame = (cb: FrameRequestCallback) => {
+        cb(performance.now());
+        return ++rafId;
+    };
+    global.cancelAnimationFrame = () => {};
+}
+
+function restoreContentPreviewAPIs(): void {
+    if (origRangeGetClientRects !== undefined) Range.prototype.getClientRects = origRangeGetClientRects;
+    if (origElementGetClientRects !== undefined) Element.prototype.getClientRects = origElementGetClientRects;
+    if (origGetComputedStyle !== undefined) window.getComputedStyle = origGetComputedStyle;
+    if (origMO !== undefined) global.MutationObserver = origMO;
+    if (origRO !== undefined) global.ResizeObserver = origRO;
+    if (origRaf !== undefined) global.requestAnimationFrame = origRaf;
+    if (origCaf !== undefined) global.cancelAnimationFrame = origCaf;
+}
 
 function setupDOM(html: string): void {
     const dom = new JSDOM(html, { url: 'https://example.test/', pretendToBeVisual: true });
@@ -11,7 +102,11 @@ function setupDOM(html: string): void {
     global.NodeFilter = dom.window.NodeFilter;
     // @ts-expect-error - JSDOM global injection for browser-like extractor tests
     global.Node = dom.window.Node;
-    // Expose JSDOM browser APIs as globals for CapturePreview tracking
+    // @ts-expect-error - JSDOM global injection for ContentPreview DOM stubs
+    if (!global.Range) global.Range = dom.window.Range;
+    // @ts-expect-error - JSDOM global injection for ContentPreview DOM stubs
+    if (!global.Element) global.Element = dom.window.Element;
+    // Expose JSDOM browser APIs as globals for ContentPreview tracking
     if (!global.MutationObserver) global.MutationObserver = dom.window.MutationObserver;
     if (!global.ResizeObserver) {
         global.ResizeObserver = dom.window.ResizeObserver ?? class {
@@ -26,7 +121,7 @@ function setupDOM(html: string): void {
     if (!global.cancelAnimationFrame) {
         global.cancelAnimationFrame = (id: number) => clearTimeout(id);
     }
-    // Stub chrome.runtime.getURL for CapturePreview badge logo
+    // Stub chrome.runtime.getURL for ContentPreview
     if (!global.chrome) {
         global.chrome = {
             runtime: {
@@ -106,12 +201,20 @@ describe('visible-body extraction', () => {
 });
 
 describe('Preview contamination regression', () => {
-    it('never leaks CapturePreview markup or host into extraction or skeleton', () => {
-        // Body-fallback page: no semantic root (no <main>, <article>, [role="main"])
-        setupDOM('<body><h1>Assignment</h1><p>Submit Friday.</p></body>');
+    beforeEach(() => {
+        // Set up JSDOM first so Range/Element are available globally
+        setupDOM('<body><h1>Assignment</h1><p>Submit Friday.</p><img alt="diagram"></body>');
+        stubContentPreviewAPIs();
+    });
+
+    afterEach(() => {
+        restoreContentPreviewAPIs();
+    });
+
+    it('never leaks ContentPreview markup or host into extraction or skeleton', () => {
 
         // Show the preview overlay on document.body
-        const preview = new CapturePreview();
+        const preview = new ContentPreview();
         preview.show(document.body);
 
         // Extract content (should take the visible-body path)
@@ -120,17 +223,21 @@ describe('Preview contamination regression', () => {
         expect(extraction!.strategy).toBe('visible-body');
 
         // The extraction clone must not contain the preview host
-        expect(extraction!.element.querySelector(`[${PREVIEW_HOST_ATTRIBUTE}]`)).toBeNull();
+        expect(extraction!.element.querySelector(`[${CONTENT_PREVIEW_HOST_ATTRIBUTE}]`)).toBeNull();
+
+        // The extraction clone must not contain .content-preview-box
+        expect(extraction!.element.querySelector('.content-preview-box')).toBeNull();
 
         // Skeletonize the extraction result
         const skeleton = skeletonize(extraction!.element);
 
-        // Skeleton HTML must not contain any preview-related markup or color
+        // Skeleton HTML must not contain any preview-related markup, marker, or color
         expect(skeleton.html).not.toContain('markdownizer-preview');
-        expect(skeleton.html).not.toContain('#6366f1');
-        expect(skeleton.html).not.toContain(PREVIEW_HOST_ATTRIBUTE);
+        expect(skeleton.html).not.toContain('content-preview-box');
+        expect(skeleton.html).not.toContain('rgb(16, 185, 129)');
+        expect(skeleton.html).not.toContain(CONTENT_PREVIEW_HOST_ATTRIBUTE);
 
-        // Token values must not contain the word 'Preview'
+        // Token values must not contain the word 'Preview' or preview UI text
         const allTokenValues = Object.values(skeleton.tokens).join(' ');
         expect(allTokenValues).not.toContain('Preview');
 

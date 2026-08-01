@@ -67,11 +67,12 @@ function createChromeMock() {
         },
         scripting: {
             executeScript: vi.fn(async () => []),
+            insertCSS: vi.fn(async () => undefined),
         },
         runtime: {
             getManifest: vi.fn(() => ({
                 content_scripts: [
-                    { js: ['content.js'] },
+                    { js: ['content.js'], css: ['content.css'] },
                 ],
             })),
             sendMessage: vi.fn(),
@@ -234,6 +235,19 @@ describe('openPreviewSession', () => {
         expect(chrome.scripting.executeScript).toHaveBeenCalledWith({
             target: { tabId: 42 },
             files: ['content.js'],
+        });
+    });
+
+    it('injects preview CSS when dynamically loading content script', async () => {
+        chrome.tabs.sendMessage
+            .mockRejectedValueOnce(new Error('Receiving end does not exist'))
+            .mockResolvedValue({ success: true });
+
+        await openPreviewSession(42);
+
+        expect(chrome.scripting.insertCSS).toHaveBeenCalledWith({
+            target: { tabId: 42 },
+            files: ['content.css'],
         });
     });
 
@@ -676,5 +690,157 @@ describe('App popup lifecycle', () => {
 
         // The port should have been disconnected (cleanup)
         expect(port.disconnect).toHaveBeenCalled();
+    });
+});
+
+// ── Toggle Component Tests ───────────────────────────────────────────────────
+
+describe('Toggle component', () => {
+    let Toggle: typeof import('../src/popup/components/Toggle').Toggle;
+
+    beforeEach(async () => {
+        if (!document.body) {
+            document.body = document.createElement('body');
+        }
+        document.body.innerHTML = '<div id="toggle-root"></div>';
+
+        vi.resetModules();
+        const toggleMod = await import('../src/popup/components/Toggle');
+        Toggle = toggleMod.Toggle;
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    it('renders a label wrapping a hidden checkbox and visual track', async () => {
+        const { render } = await import('preact');
+        const { act } = await import('preact/test-utils');
+        const root = document.getElementById('toggle-root')!;
+
+        await act(async () => {
+            render(<Toggle id="test-toggle" label="Test option" checked={false} onChange={() => {}} />, root);
+        });
+
+        const label = root.querySelector('label');
+        expect(label).not.toBeNull();
+
+        const checkbox = root.querySelector('input[type="checkbox"]') as HTMLInputElement;
+        expect(checkbox).not.toBeNull();
+        expect(checkbox.id).toBe('test-toggle');
+
+        // The visual track should carry aria-hidden="true"
+        const track = root.querySelector('[aria-hidden="true"]');
+        expect(track).not.toBeNull();
+    });
+
+    it('label htmlFor matches checkbox id for accessible name', async () => {
+        const { render } = await import('preact');
+        const { act } = await import('preact/test-utils');
+        const root = document.getElementById('toggle-root')!;
+
+        await act(async () => {
+            render(<Toggle id="capture-preview-toggle" label="Preview" checked={true} onChange={() => {}} />, root);
+        });
+
+        const label = root.querySelector('label') as HTMLLabelElement;
+        expect(label.htmlFor).toBe('capture-preview-toggle');
+
+        const checkbox = root.querySelector('#capture-preview-toggle') as HTMLInputElement;
+        expect(checkbox).not.toBeNull();
+        expect(checkbox.type).toBe('checkbox');
+    });
+
+    it('checked state reflects props', async () => {
+        const { render } = await import('preact');
+        const { act } = await import('preact/test-utils');
+        const root = document.getElementById('toggle-root')!;
+
+        await act(async () => {
+            render(<Toggle id="t1" label="On toggle" checked={true} onChange={() => {}} />, root);
+        });
+
+        const checkbox = root.querySelector('#t1') as HTMLInputElement;
+        expect(checkbox.checked).toBe(true);
+
+        await act(async () => {
+            render(<Toggle id="t1" label="On toggle" checked={false} onChange={() => {}} />, root);
+        });
+
+        expect(checkbox.checked).toBe(false);
+    });
+
+    it('clicking the label invokes onChange', async () => {
+        const { render } = await import('preact');
+        const { act } = await import('preact/test-utils');
+        const root = document.getElementById('toggle-root')!;
+        const handler = vi.fn();
+
+        await act(async () => {
+            render(<Toggle id="t-click" label="Click test" checked={false} onChange={handler} />, root);
+        });
+
+        const label = root.querySelector('label')!;
+        await act(async () => {
+            label.click();
+        });
+
+        expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('dispatching Space on focused checkbox changes checked state', async () => {
+        const { render } = await import('preact');
+        const { act } = await import('preact/test-utils');
+        const root = document.getElementById('toggle-root')!;
+
+        await act(async () => {
+            render(<Toggle id="t-space" label="Space test" checked={false} onChange={() => {}} />, root);
+        });
+
+        const checkbox = root.querySelector('#t-space') as HTMLInputElement;
+        expect(checkbox.checked).toBe(false);
+
+        await act(async () => {
+            checkbox.focus();
+            checkbox.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+            // Native checkbox toggles on Space keydown
+            checkbox.checked = !checkbox.checked;
+            checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        expect(checkbox.checked).toBe(true);
+    });
+
+    it('text label appears before the switch container in document order', async () => {
+        const { render } = await import('preact');
+        const { act } = await import('preact/test-utils');
+        const root = document.getElementById('toggle-root')!;
+
+        await act(async () => {
+            render(<Toggle id="t-order" label="Preview" checked={false} onChange={() => {}} />, root);
+        });
+
+        const label = root.querySelector('label')!;
+        const children = Array.from(label.children);
+        // First child should be the text span, second should be the switch container
+        expect(children.length).toBe(2);
+        expect(children[0].textContent).toBe('Preview');
+        // The switch container should contain the hidden checkbox and aria-hidden track
+        expect(children[1].querySelector('[aria-hidden="true"]')).not.toBeNull();
+    });
+
+    it('label is full-width with flex layout', async () => {
+        const { render } = await import('preact');
+        const { act } = await import('preact/test-utils');
+        const root = document.getElementById('toggle-root')!;
+
+        await act(async () => {
+            render(<Toggle id="t-flex" label="Flex test" checked={false} onChange={() => {}} />, root);
+        });
+
+        const label = root.querySelector('label') as HTMLLabelElement;
+        expect(label.className).toContain('w-full');
+        expect(label.className).toContain('flex');
+        expect(label.className).toContain('justify-between');
     });
 });

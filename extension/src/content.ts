@@ -1,7 +1,8 @@
+import './content-preview.css';
 import { getBestContent, getReadabilityContent } from './extractor';
 import { skeletonize, rehydrateMarkdown } from './logic';
 import { shouldUseReadability } from './payload';
-import { CapturePreview } from './capture-preview';
+import { ContentPreview } from './content-preview';
 import {
     PREVIEW_PORT_NAME,
     type PreviewCommand,
@@ -15,7 +16,7 @@ interface BackgroundConversionResponse {
 
 // ── Preview Protocol ──────────────────────────────────────────────────────────
 
-const preview = new CapturePreview();
+const preview = new ContentPreview();
 
 interface OwnerState {
     port: chrome.runtime.Port;

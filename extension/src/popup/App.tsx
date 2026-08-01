@@ -4,7 +4,7 @@ import { Footer } from './components/Footer';
 import { StatusOrb } from './components/StatusOrb';
 import { StatusMessage } from './components/StatusMessage';
 import { ActionButtons } from './components/ActionButtons';
-import { openPreviewSession, type PreviewSession, isSupportedPageUrl } from './preview-session';
+import { injectContentScript, openPreviewSession, type PreviewSession, isSupportedPageUrl } from './preview-session';
 
 interface ExtensionResponse {
   success: boolean;
@@ -242,17 +242,7 @@ async function ensureContentScriptLoaded(tabId: number): Promise<ExtensionRespon
         return await chrome.tabs.sendMessage(tabId, { action: "convert_page" });
     } catch (e: unknown) {
         // If messaging fails, the script might not be injected (e.g. extension updated or fresh tab)
-        const manifest = chrome.runtime.getManifest();
-        const contentScriptFile = manifest.content_scripts?.[0]?.js?.[0];
-
-        if (!contentScriptFile) {
-            throw new Error("Content script configuration missing in manifest");
-        }
-
-        await chrome.scripting.executeScript({
-            target: { tabId },
-            files: [contentScriptFile]
-        });
+        await injectContentScript(tabId);
 
         // Retry loop: The script might take a moment to initialize its message listeners
         let lastError;

@@ -23,7 +23,7 @@ Most web clippers process readable content on third-party servers. Markdownizer 
 *   **LLM-Ready Output**: Produces cleaner context than raw HTML, messy copy-paste, or sending only the URL.
 *   **Smart Extraction**: Prioritizes main content and handles complex code blocks using an integrated `readability.js` engine.
 *   **Structure Preservation**: Keeps useful headings, lists, tables, and code blocks readable.
-*   **Capture Preview**: Shows an outline around the content region that will be converted, so you can verify the extraction target before you commit to the conversion.
+*   **Capture Preview**: Highlights visible text, images, and interactive controls expected in conversion, so you can verify what will be captured before committing.
 
 ## Installation
 
@@ -52,16 +52,7 @@ Most web clippers process readable content on third-party servers. Markdownizer 
 
 ## Capture Preview
 
-When you open Markdownizer, an indigo outline appears on the page highlighting the content region that will be converted. This is the same region used by Smart Extraction — typically the `<article>`, `<main>`, or `[role="main"]` element, falling back to the visible body.
-
-The preview outline is rendered in an isolated Shadow DOM and uses `pointer-events: none`, so it never blocks clicks, scrolling, or text selection. The outline tracks the target element's geometry and updates if the page layout changes.
-
-**Preview behavior:**
-
-*   **Default on**: Opening Markdownizer shows the preview outline immediately.
-*   **Persistent setting**: The Preview toggle remembers your choice across popup opens and page reloads.
-*   **Loading state**: Clicking Start changes the outline to a shimmer animation, indicating conversion is in progress.
-*   **No content contamination**: The preview overlay is completely isolated from the extraction pipeline. Converted Markdown never contains preview markup, styles, or text.
+When you open Markdownizer, visible text across the page is highlighted and boxed indicators appear around images and interactive controls that will be captured. This gives you a quick way to verify the extraction target before starting conversion.
 
 ## Development Setup
 
