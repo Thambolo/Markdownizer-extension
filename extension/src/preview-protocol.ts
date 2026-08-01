@@ -3,7 +3,7 @@ export const PREVIEW_PORT_NAME = 'markdownizer-capture-preview';
 export type CaptureMode = 'smart' | 'full-page';
 
 export type PreviewCommand =
-    | { type: 'preview:show'; sessionId: string; captureMode: CaptureMode }
+    | { type: 'preview:show'; sessionId: string; captureMode?: CaptureMode }
     | { type: 'preview:loading'; sessionId: string }
     | { type: 'preview:ready'; sessionId: string }
     | { type: 'preview:hide'; sessionId: string };
@@ -14,5 +14,5 @@ export interface PreviewReadyRequest {
 
 export interface ConvertPageRequest {
     action: 'convert_page';
-    captureMode: CaptureMode;
+    captureMode?: CaptureMode;
 }

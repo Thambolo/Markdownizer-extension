@@ -479,6 +479,25 @@ describe('Content-script preview protocol', () => {
         }));
     });
 
+    it('converts a default request without captureMode using semantic strategy', async () => {
+        setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
+        await import('../src/content');
+
+        const response = await new Promise<unknown>((resolve) => {
+            messageListener!(
+                { action: 'convert_page' },
+                {},
+                resolve,
+            );
+        });
+
+        expect(response).toEqual(expect.objectContaining({ success: true }));
+        expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+            action: 'convert_skeleton',
+            payload: expect.objectContaining({ extraction_strategy: 'semantic-html' }),
+        }));
+    });
+
     it('rejects an oversized full-page conversion without Readability fallback', async () => {
         setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
         skeletonizeMock.mockReturnValue({ html: 'x'.repeat(1_048_577), tokens: [] });
