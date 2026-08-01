@@ -1,6 +1,18 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { CONTENT_PREVIEW_HOST_ATTRIBUTE } from '../src/content-preview';
+import {
+    CONTENT_PREVIEW_HOST_ATTRIBUTE,
+    READY_HIGHLIGHT_NAME,
+} from '../src/content-preview';
+
+const { skeletonizeMock } = vi.hoisted(() => ({
+    skeletonizeMock: vi.fn(),
+}));
+
+vi.mock('../src/logic', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../src/logic')>();
+    return { ...actual, skeletonize: skeletonizeMock };
+});
 
 // ── Chrome API Mocks ──────────────────────────────────────────────────────────
 
@@ -216,6 +228,8 @@ describe('Content-script preview protocol', () => {
         vi.resetModules();
         // @ts-expect-error – injecting global chrome for content script
         global.chrome = createChromeMock();
+        skeletonizeMock.mockReset();
+        skeletonizeMock.mockReturnValue({ html: '<p>Test</p>', tokens: [] });
         connectListener = undefined;
         messageListener = undefined;
     });
@@ -416,5 +430,74 @@ describe('Content-script preview protocol', () => {
         expect(result).toBe(false);
         // sendResponse should be called with success
         expect(sendResponse).toHaveBeenCalledWith({ success: true });
+    });
+
+    it('highlights visible body content for a full-page preview', async () => {
+        setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+        port.emitMessage({ type: 'preview:show', sessionId: 'full', captureMode: 'full-page' });
+
+        const ranges = (CSS.highlights as Map<string, StubHighlight>)
+            .get(READY_HIGHLIGHT_NAME)?.ranges.map((range) => range.toString());
+        expect(ranges).toContain('Smart only');
+        expect(ranges).toContain('Outside main');
+    });
+
+    it('uses semantic content for a smart preview', async () => {
+        setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+        port.emitMessage({ type: 'preview:show', sessionId: 'smart', captureMode: 'unexpected' });
+
+        const ranges = (CSS.highlights as Map<string, StubHighlight>)
+            .get(READY_HIGHLIGHT_NAME)?.ranges.map((range) => range.toString());
+        expect(ranges).toContain('Smart only');
+        expect(ranges).not.toContain('Outside main');
+    });
+
+    it('converts a full-page request using the visible-body strategy', async () => {
+        setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
+        await import('../src/content');
+
+        const response = await new Promise<unknown>((resolve) => {
+            messageListener!(
+                { action: 'convert_page', captureMode: 'full-page' },
+                {},
+                resolve,
+            );
+        });
+
+        expect(response).toEqual(expect.objectContaining({ success: true }));
+        expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+            action: 'convert_skeleton',
+            payload: expect.objectContaining({ extraction_strategy: 'visible-body' }),
+        }));
+    });
+
+    it('rejects an oversized full-page conversion without Readability fallback', async () => {
+        setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
+        skeletonizeMock.mockReturnValue({ html: 'x'.repeat(1_048_577), tokens: [] });
+        const extractor = await import('../src/extractor');
+        const readabilitySpy = vi.spyOn(extractor, 'getReadabilityContent');
+        await import('../src/content');
+
+        const response = await new Promise<unknown>((resolve) => {
+            messageListener!(
+                { action: 'convert_page', captureMode: 'full-page' },
+                {},
+                resolve,
+            );
+        });
+
+        expect(response).toEqual({
+            success: false,
+            error: 'The full page is too large to convert. Turn off Capture full page to use Smart selection.',
+        });
+        expect(readabilitySpy).not.toHaveBeenCalled();
     });
 });

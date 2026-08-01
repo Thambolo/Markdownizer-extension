@@ -1,10 +1,11 @@
 import './content-preview.css';
-import { getBestContent, getReadabilityContent } from './extractor';
+import { getContentForMode, getReadabilityContent } from './extractor';
 import { skeletonize, rehydrateMarkdown } from './logic';
 import { shouldUseReadability } from './payload';
 import { ContentPreview } from './content-preview';
 import {
     PREVIEW_PORT_NAME,
+    type CaptureMode,
     type PreviewCommand,
 } from './preview-protocol';
 
@@ -27,6 +28,10 @@ interface OwnerState {
 let nextGeneration = 0;
 let currentOwner: OwnerState | null = null;
 
+function normalizeCaptureMode(value: unknown): CaptureMode {
+    return value === 'full-page' ? 'full-page' : 'smart';
+}
+
 chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== PREVIEW_PORT_NAME) return;
 
@@ -37,7 +42,7 @@ chrome.runtime.onConnect.addListener((port) => {
 
         switch (cmd.type) {
             case 'preview:show': {
-                const extraction = getBestContent();
+                const extraction = getContentForMode(normalizeCaptureMode(cmd.captureMode));
                 if (!extraction) {
                     port.postMessage({
                         success: false,
@@ -92,7 +97,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 
     if (request.action === "convert_page") {
-        processPage().then(sendResponse).catch((err) => {
+        processPage(normalizeCaptureMode(request.captureMode)).then(sendResponse).catch((err) => {
             console.error("Markdownizer Error:", err);
             // Default to technical message if userMessage is not set (for unexpected errors)
             sendResponse({ success: false, error: err.message });
@@ -101,18 +106,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
-async function processPage() {
-    let extraction = getBestContent();
+async function processPage(captureMode: CaptureMode) {
+    let extraction = getContentForMode(captureMode);
     if (!extraction) throw new Error('Could not find visible page content.');
 
     let skeleton = skeletonize(extraction.element);
+    if (shouldUseReadability(skeleton.html) && captureMode === 'full-page') {
+        throw new Error('The full page is too large to convert. Turn off Capture full page to use Smart selection.');
+    }
+
     if (shouldUseReadability(skeleton.html)) {
         extraction = getReadabilityContent();
         if (!extraction) throw new Error('Could not reduce page content to the supported size.');
         skeleton = skeletonize(extraction.element);
     }
 
-    if (shouldUseReadability(skeleton.html)) {
+    if (captureMode === 'smart' && shouldUseReadability(skeleton.html)) {
         throw new Error('This page is too large to convert.');
     }
 
