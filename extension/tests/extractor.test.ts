@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE } from '../src/content-preview';
-import { getBestContent, getVisibleBodyContent } from '../src/extractor';
+import { getBestContent, getVisibleBodyContent, getContentForMode } from '../src/extractor';
 import { skeletonize } from '../src/logic';
 
 // ── Stubs for ContentPreview browser APIs in JSDOM ───────────────────────────
@@ -243,5 +243,24 @@ describe('Preview contamination regression', () => {
 
         // Clean up
         preview.remove();
+    });
+});
+
+describe('extraction modes', () => {
+    it('smart mode delegates to semantic root via getBestContent', () => {
+        setupDOM('<body><header>Sidebar</header><main><h1>Article</h1><p>Body text</p></main><aside>Outside main</aside></body>');
+        const result = getContentForMode('smart');
+
+        expect(result?.sourceElement.tagName).toBe('MAIN');
+        expect(result?.strategy).toBe('semantic-html');
+    });
+
+    it('full-page mode delegates to visible body via getVisibleBodyContent', () => {
+        setupDOM('<body><header>Sidebar</header><main><h1>Article</h1><p>Body text</p></main><aside>Outside main</aside></body>');
+        const result = getContentForMode('full-page');
+
+        expect(result?.sourceElement).toBe(document.body);
+        expect(result?.strategy).toBe('visible-body');
+        expect(result?.element.textContent).toContain('Outside main');
     });
 });

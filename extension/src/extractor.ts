@@ -1,5 +1,6 @@
 import { Readability } from './readability.js';
 import { recoverGeneratedText } from './generated-text.js';
+import type { CaptureMode } from './preview-protocol.js';
 
 /**
  * Extractor Strategy Module
@@ -73,6 +74,10 @@ function sanitizeVisibleContent(sourceRoot: HTMLElement): HTMLElement | null {
     });
 
     return cloneRoot.textContent?.trim() ? cloneRoot : null;
+}
+
+export function getContentForMode(mode: CaptureMode): InitialExtractionResult | null {
+    return mode === 'full-page' ? getVisibleBodyContent() : getBestContent();
 }
 
 function isNonContentElement(source: HTMLElement): boolean {

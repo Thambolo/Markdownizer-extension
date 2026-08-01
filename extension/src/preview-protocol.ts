@@ -1,5 +1,7 @@
 export const PREVIEW_PORT_NAME = 'markdownizer-capture-preview';
 
+export type CaptureMode = 'smart' | 'full-page';
+
 export type PreviewCommand =
     | { type: 'preview:show'; sessionId: string }
     | { type: 'preview:loading'; sessionId: string }
