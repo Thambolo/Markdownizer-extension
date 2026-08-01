@@ -18,6 +18,74 @@ function setupDOM(html: string): HTMLElement {
 }
 
 describe('Skeleton Protocol', () => {
+    it('compacts every skeleton before serialization', () => {
+        const source = setupDOM(`
+            <main id="root" class="layout" style="display:block" data-hydration="${'x'.repeat(2000)}">
+                <!-- remove me -->
+                <p class="prose" data-react-props="large">Hello</p>
+                <svg viewBox="0 0 10 10"><path d="${'M0 0 '.repeat(200)}"></path><title>Diagram</title></svg>
+            </main>
+        `).querySelector('main') as HTMLElement;
+
+        const { html, tokens } = skeletonize(source);
+
+        expect(html).toContain('<main>');
+        expect(html).toContain('<svg><path></path><title>{{MDZ1}}</title></svg>');
+        expect(html).not.toContain('data-hydration');
+        expect(html).not.toContain('data-react-props');
+        expect(html).not.toContain('viewBox');
+        expect(html).not.toContain(' d=');
+        expect(html).not.toContain('remove me');
+        expect(Object.values(tokens)).toEqual(['Hello', 'Diagram']);
+    });
+
+    it('does not compact or remove nodes from the live source DOM', () => {
+        const source = setupDOM(`
+            <main id="live" class="layout" data-seen="source">
+                <object><span>fallback</span></object>
+                <svg viewBox="0 0 10 10"><path d="M0 0"></path></svg>
+            </main>
+        `).querySelector('main') as HTMLElement;
+        const before = source.outerHTML;
+
+        skeletonize(source);
+
+        expect(source.outerHTML).toBe(before);
+    });
+
+    it('retains native-control marker attributes needed by the backend', () => {
+        const root = setupDOM('<main><input type="checkbox" checked data-noise="large"></main>').querySelector('main') as HTMLElement;
+        const { html } = skeletonize(root);
+        const marker = new JSDOM(html).window.document.querySelector('mdz-control');
+
+        expect(marker?.getAttribute('data-kind')).toBe('checkbox');
+        expect(marker?.getAttribute('data-type')).toBe('checkbox');
+        expect(marker?.getAttribute('data-state')).toBe('checked');
+        expect(marker?.hasAttribute('data-noise')).toBe(false);
+    });
+
+    it('keeps normalized ReDoc JSON language but removes adapter metadata', () => {
+        const root = setupDOM('<main><div id="redoc"><div class="api-content"><section data-section-id="tag/Pet/paths/~1pets/get"><div class="redoc-json"><code>{"ok":true}</code></div></section></div></div></main>');
+        const { html } = skeletonize(root.querySelector('main') as HTMLElement);
+        const output = new JSDOM(html).window.document;
+
+        expect(output.querySelector('code')?.getAttribute('class')).toBe('language-json');
+        expect(html).not.toContain('data-section-id');
+        expect(html).not.toContain('class="api-content"');
+        expect(html).not.toContain('class="redoc-json"');
+    });
+
+    it('retains only code-language class tokens needed by backend detection', () => {
+        const root = setupDOM('<div class="highlight highlight-source-shell position-relative"><pre class="notranslate"><code class="pl-k">echo ok</code></pre></div>').querySelector('div') as HTMLElement;
+        const { html } = skeletonize(root);
+
+        expect(html).toContain('class="highlight-source-shell"');
+        expect(html).not.toContain('highlight ');
+        expect(html).not.toContain('position-relative');
+        expect(html).not.toContain('notranslate');
+        expect(html).not.toContain('pl-k');
+    });
+
     it('replaces visible text with tokens', () => {
         const root = setupDOM('<article><h1>Hello World</h1><p>This is a <b>test</b>.</p></article>');
         const { html, tokens } = skeletonize(root.querySelector('article') as HTMLElement);

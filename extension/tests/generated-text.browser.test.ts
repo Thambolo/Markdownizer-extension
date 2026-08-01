@@ -20,14 +20,19 @@ describe('CSS-generated text in Chromium', () => {
     it('preserves an attr-generated operator through backend-shaped code rehydration', () => {
         addStyle('.swap::after { content: attr(data-seen); }');
         document.body.innerHTML = '<pre><code>g = f + d <span class="swap" data-seen="- "></span>e    # operations in conditional branch</code></pre>';
+        const liveSwap = document.querySelector('.swap') as HTMLElement;
 
-        const { tokens } = skeletonize(document.querySelector('pre') as HTMLElement);
+        const { html, tokens } = skeletonize(document.querySelector('pre') as HTMLElement);
 
         expect(Object.values(tokens)).toEqual([
             'g = f + d ',
             '- ',
             'e    # operations in conditional branch',
         ]);
+        expect(html).not.toContain('data-seen');
+        expect(html).not.toContain('class="swap"');
+        expect(liveSwap.getAttribute('data-seen')).toBe('- ');
+        expect(liveSwap.classList.contains('swap')).toBe(true);
         expect(rehydrateMarkdown('```\n{{MDZ0}}{{MDZ1}}{{MDZ2}}\n```', tokens))
             .toContain('g = f + d - e    # operations in conditional branch');
     });

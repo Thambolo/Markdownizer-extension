@@ -35,7 +35,7 @@ describe('visible-body extraction in Chromium', () => {
         expect(text).toContain('Option B');
         expect(text).toContain('Q5 Halstead');
         expect(text).toContain('Option E');
-        expect(html).toContain('data-tab="q1"');
+        expect((html.match(/<section>/g) ?? [])).toHaveLength(3);
     });
 
     it('preserves body context while normalizing nested ReDoc JSON', () => {

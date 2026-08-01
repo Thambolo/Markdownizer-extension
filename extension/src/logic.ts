@@ -3,6 +3,7 @@
 import { normalizeRenderedReDoc } from './redoc-normalizer';
 import { recoverGeneratedText } from './generated-text';
 import { serializeNativeControls } from './native-controls';
+import { compactSkeleton } from './skeleton-compactor';
 import { remark } from 'remark';
 import remarkGfm from 'remark-gfm';
 import remarkStringify from 'remark-stringify';
@@ -38,6 +39,7 @@ class Skeletonizer {
         recoverGeneratedText(root, clone);
         serializeNativeControls(root, clone);
         normalizeRenderedReDoc(clone);
+        compactSkeleton(clone);
         const walker = document.createTreeWalker(
             clone,
             NodeFilter.SHOW_TEXT,
