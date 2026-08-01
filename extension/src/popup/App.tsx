@@ -172,9 +172,9 @@ export function App() {
 
   const processResponse = (response: ExtensionResponse, tab: chrome.tabs.Tab) => {
       if (response && response.success) {
-        // Hide preview before exposing Copy and Download
+        // Restore the normal preview state while keeping it visible until popup close
         if (previewEnabled && sessionRef.current) {
-          sessionRef.current.hide();
+          sessionRef.current.setReady();
         }
         const safeTitle = sanitizeTitle(tab.title);
         setMarkdown(response.markdown);

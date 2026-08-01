@@ -544,7 +544,7 @@ describe('App popup lifecycle', () => {
         );
     });
 
-    it('hides preview after successful conversion', async () => {
+    it('keeps preview visible and restores ready state after successful conversion', async () => {
         chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: true });
         chrome.tabs.sendMessage.mockResolvedValue({
             success: true,
@@ -576,9 +576,12 @@ describe('App popup lifecycle', () => {
             await new Promise(r => setTimeout(r, 100));
         });
 
-        // hide() should have been called after successful conversion
-        expect(port.postMessage).toHaveBeenCalledWith(
+        // Successful conversion should leave the preview visible in its normal state
+        expect(port.postMessage).not.toHaveBeenCalledWith(
             expect.objectContaining({ type: 'preview:hide' })
+        );
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'preview:ready' })
         );
     });
 
