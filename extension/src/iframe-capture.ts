@@ -15,6 +15,7 @@ export type IframeSanitizer = (
     sourceRoot: HTMLElement,
     budget: IframeBudget,
     frameDepth: number,
+    framePath?: number[],
 ) => HTMLElement | null;
 
 export function createIframeBudget(): IframeBudget {
@@ -23,6 +24,26 @@ export function createIframeBudget(): IframeBudget {
     Object.defineProperty(budget, 'maxCount', { writable: false });
     Object.defineProperty(budget, 'maxDepth', { writable: false });
     return budget;
+}
+
+/**
+ * Compute the child-index path from `document.body` to `element`.
+ * Each entry is the zero-based index of the element among its
+ * parent's child elements. Returns an empty array if element
+ * is body itself or not reachable from body.
+ */
+export function bodyRelativePath(element: Element): number[] {
+    const path: number[] = [];
+    let current: Element | null = element;
+    while (current && current !== current.ownerDocument.body) {
+        const parent = current.parentElement;
+        if (!parent) break;
+        const siblings = parent.children;
+        const index = Array.from(siblings).indexOf(current);
+        if (index >= 0) path.unshift(index);
+        current = parent;
+    }
+    return path;
 }
 
 /**
@@ -92,8 +113,9 @@ export function expandSameOriginIframes(
         const frameDocument = readSameOriginFrame(sourceFrame);
         if (!frameDocument?.body) return;
 
+        const framePath = bodyRelativePath(sourceFrame);
         budget.count += 1;
-        const sanitizedFrame = sanitize(frameDocument.body, budget, frameDepth);
+        const sanitizedFrame = sanitize(frameDocument.body, budget, frameDepth, framePath);
         if (!sanitizedFrame?.textContent?.trim()) return;
 
         const destinationDocument = cloneFrame.ownerDocument;

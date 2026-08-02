@@ -10,6 +10,7 @@ import {
     type PreviewEligibilityMessage,
     type PreviewCommand,
 } from './preview-protocol';
+import type { CodeMirrorDocumentCapture } from './codemirror-bridge';
 
 interface BackgroundConversionResponse {
     success: boolean;
@@ -258,8 +259,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
+async function requestCodeMirrorCapture(): Promise<CodeMirrorDocumentCapture | null> {
+    try {
+        const response = await chrome.runtime.sendMessage({ action: 'read_codemirror_capture' });
+        if (response?.success && response.capture) {
+            return response.capture as CodeMirrorDocumentCapture;
+        }
+    } catch {
+        // Service worker unavailable or execution failed — fall back gracefully
+    }
+    return null;
+}
+
 async function processPage(captureMode: CaptureMode, includeIframes = false) {
-    let extraction = getContentForMode(captureMode, { includeIframes });
+    let codeMirrorCapture: CodeMirrorDocumentCapture | null = null;
+    // Capture page-owned editor models when needed. Iframe inclusion is
+    // required to discover editors inside frames; the direct selector covers
+    // editors in the main document without adding a bridge call for ordinary pages.
+    if (includeIframes || document.querySelector('.CodeMirror')) {
+        codeMirrorCapture = await requestCodeMirrorCapture();
+    }
+
+    let extraction = getContentForMode(captureMode, { includeIframes, codeMirrorCapture: codeMirrorCapture ?? undefined });
     if (!extraction) throw new Error('Could not find visible page content.');
 
     let skeleton = skeletonize(extraction.element);

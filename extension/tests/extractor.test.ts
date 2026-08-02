@@ -183,6 +183,46 @@ describe('visible-body extraction', () => {
         expect(frameText).toContain('value: "live iframe value"');
     });
 
+    it('captures the full CodeMirror model from an included iframe', () => {
+        setupDOM('<body><p>Before</p><iframe title="Widget"></iframe><p>After</p></body>');
+        const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+        const frameDocument = new JSDOM(
+            '<body><div class="CodeMirror"><div class="CodeMirror-code"><pre>visible line 1</pre></div></div></body>',
+            { url: 'https://frame.example.test/widget' },
+        ).window.document;
+        const editor = frameDocument.querySelector('.CodeMirror') as HTMLElement & {
+            CodeMirror?: { getValue(): string };
+        };
+        Object.defineProperty(editor, 'CodeMirror', {
+            configurable: true,
+            value: { getValue: () => 'line 1\nline 2\nline 92' },
+        });
+        Object.defineProperty(iframe, 'contentDocument', { configurable: true, get: () => frameDocument });
+
+        const result = getVisibleBodyContent(document.body, { includeIframes: true });
+        const frameText = result?.element.querySelector('section')?.textContent ?? '';
+
+        expect(frameText).toContain('line 1');
+        expect(frameText).toContain('line 92');
+    });
+
+    it('captures the full CodeMirror model from the main document', () => {
+        setupDOM('<body><main><div class="CodeMirror"><div class="CodeMirror-code"><pre>visible line 1</pre></div></div></main></body>');
+        const editor = document.querySelector('.CodeMirror') as HTMLElement & {
+            CodeMirror?: { getValue(): string };
+        };
+        Object.defineProperty(editor, 'CodeMirror', {
+            configurable: true,
+            value: { getValue: () => 'line 1\nline 2\nline 92' },
+        });
+
+        const result = getBestContent();
+        const mainText = result?.element.textContent ?? '';
+
+        expect(mainText).toContain('line 1');
+        expect(mainText).toContain('line 92');
+    });
+
     it('reports an eligible iframe only when sanitized frame content is non-empty', () => {
         setupDOM('<body><iframe id="empty"></iframe><iframe id="content"></iframe></body>');
         const emptyFrame = document.querySelector('#empty') as HTMLIFrameElement;
@@ -379,5 +419,104 @@ describe('selectCaptureRoot', () => {
         const spy = vi.spyOn(recoverGeneratedText as { apply: (...args: unknown[]) => unknown }, 'apply');
         selectCaptureRoot('smart');
         expect(spy).not.toHaveBeenCalled();
+    });
+});
+
+describe('CodeMirror capture integration', () => {
+    it('uses main-world capture value instead of direct property when both are available', () => {
+        setupDOM('<body><div class="CodeMirror"></div></body>');
+        const editor = document.querySelector('.CodeMirror') as HTMLElement;
+        // Direct property returns a truncated visible-line value
+        Object.defineProperty(editor, 'CodeMirror', {
+            configurable: true,
+            value: { getValue: () => 'visible line only' },
+        });
+
+        // Main-world capture has the full model
+        const capture = {
+            editors: [{ path: [0], value: 'full model line 1\nfull model line 2\nfull model line 92' }],
+            frames: {},
+        };
+
+        const result = getVisibleBodyContent(document.body, { codeMirrorCapture: capture });
+        expect(result?.element.textContent).toContain('full model line 1');
+        expect(result?.element.textContent).toContain('full model line 92');
+        expect(result?.element.textContent).not.toContain('visible line only');
+    });
+
+    it('does not mutate the source DOM', () => {
+        setupDOM('<body><div class="CodeMirror"><div class="CodeMirror-code"><pre>visible</pre></div></div></body>');
+        const editor = document.querySelector('.CodeMirror') as HTMLElement;
+        const originalHTML = editor.innerHTML;
+        Object.defineProperty(editor, 'CodeMirror', {
+            configurable: true,
+            value: { getValue: () => 'full content' },
+        });
+
+        getVisibleBodyContent(document.body);
+        expect(editor.innerHTML).toBe(originalHTML);
+    });
+
+    it('applies capture to an included iframe editor by frame path', () => {
+        setupDOM('<body><p>Before</p><iframe title="Widget"></iframe><p>After</p></body>');
+        const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+        const frameDocument = new JSDOM(
+            '<body><div class="CodeMirror"><div class="CodeMirror-code"><pre>visible line</pre></div></div></body>',
+            { url: 'https://frame.example.test/widget' },
+        ).window.document;
+        const frameEditor = frameDocument.querySelector('.CodeMirror') as HTMLElement;
+        // Direct property returns truncated content
+        Object.defineProperty(frameEditor, 'CodeMirror', {
+            configurable: true,
+            value: { getValue: () => 'visible line only' },
+        });
+        Object.defineProperty(iframe, 'contentDocument', { configurable: true, get: () => frameDocument });
+
+        // The iframe is at path [1] (second child of body)
+        const capture = {
+            editors: [],
+            frames: {
+                '[1]': {
+                    editors: [{ path: [0], value: 'full iframe model\nline 2\nline 92' }],
+                    frames: {},
+                },
+            },
+        };
+
+        const result = getVisibleBodyContent(document.body, { includeIframes: true, codeMirrorCapture: capture });
+        const frameText = result?.element.querySelector('section')?.textContent ?? '';
+        expect(frameText).toContain('full iframe model');
+        expect(frameText).toContain('line 92');
+        expect(frameText).not.toContain('visible line only');
+    });
+
+    it('falls back to direct property when no capture is provided', () => {
+        setupDOM('<body><div class="CodeMirror"></div></body>');
+        const editor = document.querySelector('.CodeMirror') as HTMLElement;
+        Object.defineProperty(editor, 'CodeMirror', {
+            configurable: true,
+            value: { getValue: () => 'direct property value' },
+        });
+
+        const result = getVisibleBodyContent(document.body);
+        expect(result?.element.textContent).toContain('direct property value');
+    });
+
+    it('skips editors not found in the capture and falls back to direct property', () => {
+        setupDOM('<body><div class="CodeMirror"></div></body>');
+        const editor = document.querySelector('.CodeMirror') as HTMLElement;
+        Object.defineProperty(editor, 'CodeMirror', {
+            configurable: true,
+            value: { getValue: () => 'fallback value' },
+        });
+
+        // Capture has a different path — editor won't be found
+        const capture = {
+            editors: [{ path: [5], value: 'wrong path' }],
+            frames: {},
+        };
+
+        const result = getVisibleBodyContent(document.body, { codeMirrorCapture: capture });
+        expect(result?.element.textContent).toContain('fallback value');
     });
 });
