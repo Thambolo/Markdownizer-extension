@@ -1,6 +1,6 @@
 {
   "name": "markdownizer",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Privacy-first Web to Markdown converter",
   "type": "module",
   "scripts": {
