@@ -732,6 +732,89 @@ describe('ContentPreview lifecycle', () => {
     });
 });
 
+// ── ContentPreview incremental iframe tests ──────────────────────────────────
+
+describe('ContentPreview incremental iframe', () => {
+    let origCSS: typeof CSS | undefined;
+    let origHighlight: typeof Highlight | undefined;
+    let registry: ReturnType<typeof createMockRegistry>;
+
+    beforeEach(() => {
+        saveOriginals();
+        stubRangeClientRects();
+        stubElementClientRects(['#visible-image', 'button', '#visible-input']);
+        stubComputedStyle();
+        setupDOM(FIXTURE_HTML);
+        registry = createMockRegistry();
+        origCSS = (globalThis as any).CSS;
+        origHighlight = (globalThis as any).Highlight;
+        (globalThis as any).CSS = { highlights: registry };
+        (globalThis as any).Highlight = StubHighlight;
+    });
+
+    afterEach(() => {
+        restoreOriginals();
+        if (origCSS !== undefined) {
+            (globalThis as any).CSS = origCSS;
+        } else {
+            delete (globalThis as any).CSS;
+        }
+        if (origHighlight !== undefined) {
+            (globalThis as any).Highlight = origHighlight;
+        } else {
+            delete (globalThis as any).Highlight;
+        }
+    });
+
+    it('setIncludeIframes(false) does not remove top-document highlights', () => {
+        const preview = new ContentPreview();
+        const root = document.querySelector('main')!;
+        preview.show(root, { includeIframes: true });
+
+        // Top-document highlights present
+        expect(registry.has(READY_HIGHLIGHT_NAME)).toBe(true);
+
+        // Disable iframe preview
+        preview.setIncludeIframes(false);
+
+        // Top-document highlights still present
+        expect(registry.has(READY_HIGHLIGHT_NAME)).toBe(true);
+        const storedHighlight = registry.get(READY_HIGHLIGHT_NAME);
+        expect(storedHighlight).toBeDefined();
+        expect(storedHighlight.ranges.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('setIncludeIframes(true) followed by setIncludeIframes(false) preserves top-document state', () => {
+        const preview = new ContentPreview();
+        const root = document.querySelector('main')!;
+        preview.show(root, { includeIframes: false });
+
+        // Initially no iframes
+        expect(registry.has(READY_HIGHLIGHT_NAME)).toBe(true);
+
+        // Enable then disable
+        preview.setIncludeIframes(true);
+        preview.setIncludeIframes(false);
+
+        // Top-document highlights still present and unchanged
+        expect(registry.has(READY_HIGHLIGHT_NAME)).toBe(true);
+        expect(registry.has(LOADING_HIGHLIGHT_NAME)).toBe(false);
+    });
+
+    it('remove() clears all resources including iframe contexts', () => {
+        const preview = new ContentPreview();
+        const root = document.querySelector('main')!;
+        preview.show(root, { includeIframes: true });
+
+        expect(registry.has(READY_HIGHLIGHT_NAME)).toBe(true);
+
+        preview.remove();
+
+        expect(registry.has(READY_HIGHLIGHT_NAME)).toBe(false);
+        expect(registry.has(LOADING_HIGHLIGHT_NAME)).toBe(false);
+    });
+});
+
 describe('ContentPreview unsupported API', () => {
     let origCSS: typeof CSS | undefined;
     let origHighlight: typeof Highlight | undefined;

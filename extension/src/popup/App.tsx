@@ -5,7 +5,14 @@ import { StatusOrb } from './components/StatusOrb';
 import { StatusMessage } from './components/StatusMessage';
 import { ActionButtons } from './components/ActionButtons';
 import { injectContentScript, openPreviewSession, type PreviewSession, isSupportedPageUrl } from './preview-session';
-import type { CaptureMode } from '../preview-protocol';
+import type { CaptureMode, PreviewEligibilityMessage } from '../preview-protocol';
+import {
+  applyIframeEligibility,
+  initialIframeOptionState,
+  setIframePreference,
+  isIframeIncluded,
+  type IframeOptionState,
+} from './iframe-option';
 
 interface ExtensionResponse {
   success: boolean;
@@ -25,8 +32,31 @@ export function App() {
   const [previewWarning, setPreviewWarning] = useState('');
   const [captureMode, setCaptureMode] = useState<CaptureMode>('smart');
   const captureModeRef = useRef<CaptureMode>('smart');
+  const [iframeOption, setIframeOption] = useState<IframeOptionState>(initialIframeOptionState);
+  const iframeOptionRef = useRef<IframeOptionState>(initialIframeOptionState());
+  const previewEnabledRef = useRef(true);
+  const inspectionGenerationRef = useRef(0);
 
   const sessionRef = useRef<PreviewSession | null>(null);
+
+  const requestIframeInspection = (session: PreviewSession, mode: CaptureMode): void => {
+    const generation = inspectionGenerationRef.current + 1;
+    inspectionGenerationRef.current = generation;
+    session.inspect(mode, generation);
+  };
+
+  const handleIframeEligibility = (message: PreviewEligibilityMessage): void => {
+    if (message.captureMode !== captureModeRef.current || message.generation !== inspectionGenerationRef.current) return;
+
+    const prev = isIframeIncluded(iframeOptionRef.current);
+    const next = applyIframeEligibility(iframeOptionRef.current, message.hasEligibleIframes);
+    iframeOptionRef.current = next;
+    setIframeOption(next);
+    const now = isIframeIncluded(next);
+    if (previewEnabledRef.current && sessionRef.current && prev !== now) {
+      sessionRef.current.setIncludeIframes(now);
+    }
+  };
 
   useEffect(() => {
     chrome.storage.local.get(['autoDownload'], (result) => {
@@ -39,6 +69,7 @@ export function App() {
   // Read preview preference and open session on mount
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
 
     const initPreview = async () => {
       try {
@@ -47,8 +78,7 @@ export function App() {
         const enabled = result.capturePreviewEnabled !== false;
         if (cancelled) return;
         setPreviewEnabled(enabled);
-
-        if (!enabled) return;
+        previewEnabledRef.current = enabled;
 
         // Get the active tab
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -61,7 +91,9 @@ export function App() {
           return;
         }
         sessionRef.current = session;
-        session.show(captureModeRef.current);
+        unsubscribe = session.onEligibility(handleIframeEligibility);
+        if (enabled) session.show(captureModeRef.current);
+        requestIframeInspection(session, captureModeRef.current);
       } catch (err) {
         if (cancelled) return;
         setPreviewWarning('Preview unavailable on this page');
@@ -72,6 +104,7 @@ export function App() {
 
     return () => {
       cancelled = true;
+      unsubscribe?.();
       if (sessionRef.current) {
         sessionRef.current.disconnect();
         sessionRef.current = null;
@@ -96,6 +129,7 @@ export function App() {
     const target = e.target as HTMLInputElement;
     const newValue = target.checked;
     setPreviewEnabled(newValue);
+    previewEnabledRef.current = newValue;
     chrome.storage.local.set({ capturePreviewEnabled: newValue });
 
     if (!newValue) {
@@ -109,15 +143,15 @@ export function App() {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!tab?.id || !isSupportedPageUrl(tab.url)) return;
 
-        // Disconnect existing session if any
-        if (sessionRef.current) {
-          sessionRef.current.disconnect();
-          sessionRef.current = null;
+        // Create a session if none exists
+        if (!sessionRef.current) {
+          const session = await openPreviewSession(tab.id);
+          sessionRef.current = session;
+          session.onEligibility(handleIframeEligibility);
         }
 
-        const session = await openPreviewSession(tab.id);
-        sessionRef.current = session;
-        session.show(captureModeRef.current);
+        sessionRef.current.show(captureModeRef.current);
+        requestIframeInspection(sessionRef.current, captureModeRef.current);
         setPreviewWarning('');
       } catch {
         setPreviewWarning('Preview unavailable on this page');
@@ -134,7 +168,22 @@ export function App() {
     
     // If preview is enabled and session exists, show with new mode immediately
     if (previewEnabled && sessionRef.current) {
-      sessionRef.current.show(newMode);
+        sessionRef.current.show(newMode);
+        sessionRef.current.setIncludeIframes(isIframeIncluded(iframeOptionRef.current));
+    }
+    if (sessionRef.current) {
+      inspectionGenerationRef.current = 0;
+      requestIframeInspection(sessionRef.current, newMode);
+    }
+  };
+
+  const toggleIncludeIframes = (e: Event) => {
+    const target = e.target as HTMLInputElement;
+    const next = setIframePreference(iframeOptionRef.current, target.checked ? 'include' : 'exclude');
+    iframeOptionRef.current = next;
+    setIframeOption(next);
+    if (previewEnabledRef.current && sessionRef.current) {
+      sessionRef.current.setIncludeIframes(isIframeIncluded(next));
     }
   };
 
@@ -171,7 +220,7 @@ export function App() {
         throw new Error("Open a normal webpage first. Markdownizer cannot run on browser settings, extension pages, or internal URLs.");
       }
 
-      const response = await ensureContentScriptLoaded(tab.id, captureMode);
+      const response = await ensureContentScriptLoaded(tab.id, captureMode, isIframeIncluded(iframeOptionRef.current));
       processResponse(response, tab);
 
     } catch (err: unknown) {
@@ -250,6 +299,9 @@ export function App() {
           togglePreview={togglePreview} 
           captureFullPage={captureMode === 'full-page'}
           toggleCaptureFullPage={toggleCaptureFullPage}
+          iframeEligible={iframeOption.eligible}
+          includeIframes={isIframeIncluded(iframeOption)}
+          toggleIncludeIframes={toggleIncludeIframes}
         />
 
       </div>
@@ -260,9 +312,9 @@ export function App() {
  * Ensures the content script is loaded before sending a message.
  * If the initial message fails, it attempts to inject the script and retry.
  */
-async function ensureContentScriptLoaded(tabId: number, captureMode: CaptureMode): Promise<ExtensionResponse> {
+async function ensureContentScriptLoaded(tabId: number, captureMode: CaptureMode, includeIframes: boolean): Promise<ExtensionResponse> {
     try {
-        return await chrome.tabs.sendMessage(tabId, { action: "convert_page", captureMode });
+        return await chrome.tabs.sendMessage(tabId, { action: "convert_page", captureMode, includeIframes });
     } catch (e: unknown) {
         // If messaging fails, the script might not be injected (e.g. extension updated or fresh tab)
         await injectContentScript(tabId);
@@ -272,7 +324,7 @@ async function ensureContentScriptLoaded(tabId: number, captureMode: CaptureMode
         for (let i = 0; i < 5; i++) {
             await new Promise(resolve => setTimeout(resolve, 200));
             try {
-                return await chrome.tabs.sendMessage(tabId, { action: "convert_page", captureMode });
+                return await chrome.tabs.sendMessage(tabId, { action: "convert_page", captureMode, includeIframes });
             } catch (err) {
                 lastError = err;
             }

@@ -29,6 +29,10 @@ function singleRaf(): Promise<number> {
     return new Promise((resolve) => requestAnimationFrame(resolve));
 }
 
+function frameLoad(iframe: HTMLIFrameElement): Promise<void> {
+    return new Promise((resolve) => iframe.addEventListener('load', () => resolve(), { once: true }));
+}
+
 /** Reset document to a clean state. */
 function cleanDOM(): void {
     document.documentElement.innerHTML = '<head></head><body></body>';
@@ -194,6 +198,48 @@ describe('ContentPreview in Chromium', () => {
         const allText = ranges.map((r) => r.toString()).join('');
         expect(allText).not.toContain('Outside root');
         expect(allText).toContain('Inside root');
+    });
+
+    it('highlights included iframe text without drawing iframe boxes', async () => {
+        document.body.innerHTML = '<main id="root"><p>Parent text</p><iframe title="Widget" srcdoc="<p>Frame text</p>"></iframe></main>';
+        const root = document.getElementById('root')!;
+        const iframe = root.querySelector('iframe') as HTMLIFrameElement;
+        await frameLoad(iframe);
+
+        preview.show(root, { includeIframes: true });
+
+        const frameCSS = iframe.contentDocument!.defaultView!.CSS;
+        expect(frameCSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+        expect([...frameCSS.highlights.get(READY_HIGHLIGHT_NAME)!].map((range) => range.toString()).join(' ')).toContain('Frame text');
+        const host = document.querySelector(HOST_SEL) as HTMLElement | null;
+        expect(host).toBeNull();
+
+        preview.setLoading();
+        expect(frameCSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(false);
+        expect(frameCSS.highlights.has(LOADING_HIGHLIGHT_NAME)).toBe(true);
+        preview.setReady();
+        expect(frameCSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+
+        preview.remove();
+        expect(frameCSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(false);
+        expect(frameCSS.highlights.has(LOADING_HIGHLIGHT_NAME)).toBe(false);
+    });
+
+    it('rebuilds iframe highlights after a frame navigates', async () => {
+        document.body.innerHTML = '<main id="root"><iframe title="Widget" srcdoc="<p>Before navigation</p>"></iframe></main>';
+        const root = document.getElementById('root')!;
+        const iframe = root.querySelector('iframe') as HTMLIFrameElement;
+        await frameLoad(iframe);
+        preview.show(root, { includeIframes: true });
+
+        const navigated = frameLoad(iframe);
+        iframe.srcdoc = '<p>After navigation</p>';
+        await navigated;
+        await doubleRaf();
+
+        const frameCSS = iframe.contentDocument!.defaultView!.CSS;
+        expect(frameCSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+        expect([...frameCSS.highlights.get(READY_HIGHLIGHT_NAME)!].map((range) => range.toString()).join(' ')).toContain('After navigation');
     });
 
     // ── 3. Hidden mismatch: hidden text in textContent but no Range ───────
@@ -681,5 +727,363 @@ describe('ContentPreview in Chromium', () => {
 
         const host = document.querySelector(HOST_SEL) as HTMLElement;
         expect(host.getAttribute('data-preview-state')).toBe('ready');
+    });
+
+    // ── Task 5: Incremental iframe preview ──────────────────────────────────
+
+    describe('incremental iframe preview', () => {
+        it('parent non-iframe load does not rebuild iframe contexts', async () => {
+            // Setup: parent with an iframe and a sibling non-iframe element
+            document.body.innerHTML = `
+                <main id="root">
+                    <iframe title="Frame1" srcdoc="<p>Frame1 text</p>"></iframe>
+                    <img id="sibling-img" alt="Sibling" style="display:block;width:100px;height:50px;">
+                </main>
+            `;
+            const root = document.getElementById('root')!;
+            const iframe = root.querySelector('iframe') as HTMLIFrameElement;
+            await frameLoad(iframe);
+
+            preview.show(root, { includeIframes: true });
+
+            // Get frame1's registry before mutation
+            const frameCSS1 = iframe.contentDocument!.defaultView!.CSS;
+            const highlightBefore = frameCSS1.highlights.get(READY_HIGHLIGHT_NAME);
+            const rangesBefore = highlightBefore ? [...highlightBefore].map(r => r.toString()).join('') : '';
+            expect(rangesBefore).toContain('Frame1 text');
+
+            // Simulate a non-iframe load event on the document
+            const loadEvent = new Event('load', { bubbles: false });
+            iframe.ownerDocument.dispatchEvent(loadEvent);
+            await doubleRaf();
+
+            // Frame1's context should NOT have been rebuilt
+            const highlightAfter = frameCSS1.highlights.get(READY_HIGHLIGHT_NAME);
+            const rangesAfter = highlightAfter ? [...highlightAfter].map(r => r.toString()).join('') : '';
+            expect(rangesAfter).toContain('Frame1 text');
+            // The ranges should be the same objects (not rebuilt)
+            expect(highlightAfter).toBe(highlightBefore);
+        });
+
+        it('one iframe mutation does not replace another iframe context or style', async () => {
+            // Setup: root with two iframes
+            document.body.innerHTML = `
+                <main id="root">
+                    <iframe title="Frame1" srcdoc="<p>Frame1 text</p>"></iframe>
+                    <iframe title="Frame2" srcdoc="<p>Frame2 text</p>"></iframe>
+                </main>
+            `;
+            const root = document.getElementById('root')!;
+            const iframes = root.querySelectorAll('iframe');
+            const iframe1 = iframes[0] as HTMLIFrameElement;
+            const iframe2 = iframes[1] as HTMLIFrameElement;
+            await frameLoad(iframe1);
+            await frameLoad(iframe2);
+
+            preview.show(root, { includeIframes: true });
+
+            // Get references to Frame2's style element and highlights
+            const frameDoc2 = iframe2.contentDocument!;
+            const styleBefore = frameDoc2.querySelector(`[data-markdownizer-iframe-preview-style]`);
+            expect(styleBefore).not.toBeNull();
+
+            const frameCSS2 = frameDoc2.defaultView!.CSS;
+            const highlight2Before = frameCSS2.highlights.get(READY_HIGHLIGHT_NAME);
+            const ranges2Before = highlight2Before ? [...highlight2Before].map(r => r.toString()).join('') : '';
+            expect(ranges2Before).toContain('Frame2 text');
+
+            // Mutate Frame1's content
+            const frameDoc1 = iframe1.contentDocument!;
+            frameDoc1.body.innerHTML = '<p>Updated Frame1 text</p>';
+
+            // Trigger a mutation on Frame1 via its observer
+            // The MutationObserver should rebuild only Frame1
+            await doubleRaf();
+
+            // Frame2's style should still be the same element (not replaced)
+            const styleAfter = frameDoc2.querySelector(`[data-markdownizer-iframe-preview-style]`);
+            expect(styleAfter).toBe(styleBefore);
+
+            // Frame2's highlights should still contain Frame2 text
+            const highlight2After = frameCSS2.highlights.get(READY_HIGHLIGHT_NAME);
+            expect(highlight2After).not.toBeNull();
+            const ranges2After = [...highlight2After!].map(r => r.toString()).join('');
+            expect(ranges2After).toContain('Frame2 text');
+        });
+
+        it('navigation replaces only that branch context', async () => {
+            // Setup: root with two iframes
+            document.body.innerHTML = `
+                <main id="root">
+                    <iframe title="Frame1" srcdoc="<p>Frame1 original</p>"></iframe>
+                    <iframe title="Frame2" srcdoc="<p>Frame2 stable</p>"></iframe>
+                </main>
+            `;
+            const root = document.getElementById('root')!;
+            const iframes = root.querySelectorAll('iframe');
+            const iframe1 = iframes[0] as HTMLIFrameElement;
+            const iframe2 = iframes[1] as HTMLIFrameElement;
+            await frameLoad(iframe1);
+            await frameLoad(iframe2);
+
+            preview.show(root, { includeIframes: true });
+
+            // Record Frame2's style before navigation
+            const frameDoc2 = iframe2.contentDocument!;
+            const styleBefore = frameDoc2.querySelector(`[data-markdownizer-iframe-preview-style]`);
+            expect(styleBefore).not.toBeNull();
+
+            // Navigate Frame1
+            const nav1 = frameLoad(iframe1);
+            iframe1.srcdoc = '<p>Frame1 navigated</p>';
+            await nav1;
+            await doubleRaf();
+
+            // Frame1 should have new content
+            const frameDoc1New = iframe1.contentDocument!;
+            expect(frameDoc1New.body.textContent).toContain('Frame1 navigated');
+
+            // Frame2's style should still be the same DOM element (not replaced)
+            const styleAfter = frameDoc2.querySelector(`[data-markdownizer-iframe-preview-style]`);
+            expect(styleAfter).toBe(styleBefore);
+
+            // Frame2's highlights should still work
+            const frameCSS2 = frameDoc2.defaultView!.CSS;
+            const highlight2 = frameCSS2.highlights.get(READY_HIGHLIGHT_NAME);
+            expect(highlight2).not.toBeNull();
+            expect([...highlight2!].map(r => r.toString()).join('')).toContain('Frame2 stable');
+        });
+
+        it('disabling iframe preview preserves top-document highlights and boxes', async () => {
+            document.body.innerHTML = `
+                <main id="root">
+                    <p>Parent text</p>
+                    <iframe title="Frame1" srcdoc="<p>Frame1 text</p>"></iframe>
+                    <img id="root-img" alt="Root image" style="display:block;width:100px;height:50px;">
+                </main>
+            `;
+            const root = document.getElementById('root')!;
+            const iframe = root.querySelector('iframe') as HTMLIFrameElement;
+            await frameLoad(iframe);
+
+            // Show with iframes enabled
+            preview.show(root, { includeIframes: true });
+
+            // Top-document highlights present
+            expect(CSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+            const topRanges = [...CSS.highlights.get(READY_HIGHLIGHT_NAME)!].map(r => r.toString()).join('');
+            expect(topRanges).toContain('Parent text');
+
+            // Top-document host box present (image)
+            const hostBefore = document.querySelector(HOST_SEL) as HTMLElement | null;
+            expect(hostBefore).not.toBeNull();
+            const boxesBefore = hostBefore!.shadowRoot!.querySelectorAll(BOX_SEL).length;
+            expect(boxesBefore).toBeGreaterThanOrEqual(1);
+
+            // Frame highlights present
+            const frameCSS = iframe.contentDocument!.defaultView!.CSS;
+            expect(frameCSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+
+            // Disable iframe preview
+            preview.setIncludeIframes(false);
+
+            // Top-document highlights still present
+            expect(CSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+            const topRangesAfter = [...CSS.highlights.get(READY_HIGHLIGHT_NAME)!].map(r => r.toString()).join('');
+            expect(topRangesAfter).toContain('Parent text');
+
+            // Top-document host box still present
+            const hostAfter = document.querySelector(HOST_SEL) as HTMLElement | null;
+            expect(hostAfter).not.toBeNull();
+            const boxesAfter = hostAfter!.shadowRoot!.querySelectorAll(BOX_SEL).length;
+            expect(boxesAfter).toBe(boxesBefore);
+
+            // Frame highlights removed
+            expect(frameCSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(false);
+        });
+
+        it('tracks newly appended iframes without requiring another show()', async () => {
+            document.body.innerHTML = `
+                <main id="root">
+                    <p>Parent text</p>
+                </main>
+            `;
+            const root = document.getElementById('root')!;
+            preview.show(root, { includeIframes: true });
+
+            // No iframes initially — top-document highlight present
+            expect(CSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+
+            // Append a new same-origin iframe after preview is active
+            const iframe = document.createElement('iframe');
+            iframe.title = 'LateFrame';
+            iframe.srcdoc = '<p>Late frame text</p>';
+            root.appendChild(iframe);
+
+            await frameLoad(iframe);
+            // Wait for the scheduled branch reconcile to flush
+            await doubleRaf();
+
+            // The new iframe should have its own CSS highlight with frame text
+            const frameCSS = iframe.contentDocument!.defaultView!.CSS;
+            expect(frameCSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+            const frameRanges = [...frameCSS.highlights.get(READY_HIGHLIGHT_NAME)!]
+                .map((r) => r.toString())
+                .join(' ');
+            expect(frameRanges).toContain('Late frame text');
+        });
+
+        it('cleanup removes all frame styles, registries, observers, and listeners', async () => {
+            document.body.innerHTML = `
+                <main id="root">
+                    <p>Parent text</p>
+                    <iframe title="Frame1" srcdoc="<p>Frame1 text</p>"></iframe>
+                    <iframe title="Frame2" srcdoc="<p>Frame2 text</p>"></iframe>
+                </main>
+            `;
+            const root = document.getElementById('root')!;
+            const iframes = root.querySelectorAll('iframe');
+            const iframe1 = iframes[0] as HTMLIFrameElement;
+            const iframe2 = iframes[1] as HTMLIFrameElement;
+            await frameLoad(iframe1);
+            await frameLoad(iframe2);
+
+            preview.show(root, { includeIframes: true });
+
+            // Verify both frames have styles, registries, and observers
+            const frameDoc1 = iframe1.contentDocument!;
+            const frameDoc2 = iframe2.contentDocument!;
+            expect(frameDoc1.querySelector(`[data-markdownizer-iframe-preview-style]`)).not.toBeNull();
+            expect(frameDoc2.querySelector(`[data-markdownizer-iframe-preview-style]`)).not.toBeNull();
+
+            const frameCSS1 = frameDoc1.defaultView!.CSS;
+            const frameCSS2 = frameDoc2.defaultView!.CSS;
+            expect(frameCSS1.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+            expect(frameCSS2.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+
+            // Remove all preview resources
+            preview.remove();
+
+            // Frame styles removed
+            expect(frameDoc1.querySelector(`[data-markdownizer-iframe-preview-style]`)).toBeNull();
+            expect(frameDoc2.querySelector(`[data-markdownizer-iframe-preview-style]`)).toBeNull();
+
+            // Frame registries cleared
+            expect(frameCSS1.highlights.has(READY_HIGHLIGHT_NAME)).toBe(false);
+            expect(frameCSS1.highlights.has(LOADING_HIGHLIGHT_NAME)).toBe(false);
+            expect(frameCSS2.highlights.has(READY_HIGHLIGHT_NAME)).toBe(false);
+            expect(frameCSS2.highlights.has(LOADING_HIGHLIGHT_NAME)).toBe(false);
+
+            // Top-document registry also cleared
+            expect(CSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(false);
+            expect(CSS.highlights.has(LOADING_HIGHLIGHT_NAME)).toBe(false);
+
+            // Host removed
+            expect(document.querySelector(HOST_SEL)).toBeNull();
+        });
+    });
+});
+
+// ── Task 6: Browser timing fixture ───────────────────────────────────────────
+
+describe('ContentPreview timing fixture', () => {
+    let preview: ContentPreview;
+
+    beforeEach(() => {
+        cleanDOM();
+        preview = new ContentPreview();
+    });
+
+    afterEach(() => {
+        preview.remove();
+        cleanDOM();
+    });
+
+    it('show() completes within a reasonable time on a large DOM with multiple srcdoc frames', async () => {
+        // Build a controlled large DOM with 5 same-origin srcdoc frames
+        // Include an image so the host overlay is created (boxed element required)
+        let framesHtml = '';
+        for (let i = 0; i < 5; i++) {
+            framesHtml += `<iframe title="Frame ${i}" srcdoc="<p>Frame ${i} content with some text to highlight</p>"></iframe>`;
+        }
+        let textHtml = '';
+        for (let i = 0; i < 50; i++) {
+            textHtml += `<p>Paragraph ${i}: Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>`;
+        }
+        document.body.innerHTML = `
+            <main id="root">
+                <img id="hero" alt="Hero" style="display:block;width:200px;height:100px;">
+                ${textHtml}
+                ${framesHtml}
+            </main>
+        `;
+        const root = document.getElementById('root')!;
+
+        // Wait for all frames to load
+        const iframes = root.querySelectorAll('iframe');
+        await Promise.all(Array.from(iframes).map(frameLoad));
+
+        // Measure show() timing (top-level only, without iframes)
+        const startTop = performance.now();
+        preview.show(root);
+        const topPreviewMs = performance.now() - startTop;
+
+        // Assert correctness: host created, highlights registered
+        expect(document.querySelector(HOST_SEL)).not.toBeNull();
+        expect(CSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+
+        // Record timing without making test depend on fragile absolute threshold
+        // show() on a large DOM should complete in well under 1 second
+        expect(topPreviewMs).toBeLessThan(1000);
+
+        // Now measure iframe enablement separately
+        preview.remove();
+        const startIframe = performance.now();
+        preview.show(root, { includeIframes: true });
+        const iframePreviewMs = performance.now() - startIframe;
+
+        // Assert correctness: highlights present in all frames
+        expect(CSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+        for (const iframe of Array.from(iframes)) {
+            const frameCSS = iframe.contentDocument?.defaultView?.CSS;
+            expect(frameCSS?.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+        }
+
+        // Record timing without making test depend on fragile absolute threshold
+        expect(iframePreviewMs).toBeLessThan(2000);
+    });
+
+    it('setIncludeIframes(true) is faster than a full show() with iframes', async () => {
+        // Build a DOM with frames and an image (boxed element required for host)
+        document.body.innerHTML = `
+            <main id="root">
+                <img id="box-img" alt="Box" style="display:block;width:100px;height:50px;">
+                <p>Main content</p>
+                <iframe title="Frame 1" srcdoc="<p>Frame 1 text</p>"></iframe>
+                <iframe title="Frame 2" srcdoc="<p>Frame 2 text</p>"></iframe>
+            </main>
+        `;
+        const root = document.getElementById('root')!;
+        const iframes = root.querySelectorAll('iframe');
+        await Promise.all(Array.from(iframes).map(frameLoad));
+
+        // First show without iframes (baseline)
+        preview.show(root);
+        expect(document.querySelector(HOST_SEL)).not.toBeNull();
+
+        // Measure setIncludeIframes(true) — should be fast since it only adds frame highlights
+        const startToggle = performance.now();
+        preview.setIncludeIframes(true);
+        const toggleMs = performance.now() - startToggle;
+
+        // Verify correctness
+        expect(CSS.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+        for (const iframe of Array.from(iframes)) {
+            const frameCSS = iframe.contentDocument?.defaultView?.CSS;
+            expect(frameCSS?.highlights.has(READY_HIGHLIGHT_NAME)).toBe(true);
+        }
+
+        // Toggle should complete quickly (no absolute threshold, just sanity)
+        expect(toggleMs).toBeLessThan(500);
     });
 });

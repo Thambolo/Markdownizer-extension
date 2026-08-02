@@ -1,7 +1,8 @@
-export const CONTENT_PREVIEW_HOST_ATTRIBUTE = 'data-markdownizer-content-preview-host';
+import { LOADING_HIGHLIGHT_NAME, READY_HIGHLIGHT_NAME } from './preview-highlights';
+import { IframeTextPreview } from './iframe-preview';
 
-export const READY_HIGHLIGHT_NAME = 'markdownizer-preview-ready';
-export const LOADING_HIGHLIGHT_NAME = 'markdownizer-preview-loading';
+export const CONTENT_PREVIEW_HOST_ATTRIBUTE = 'data-markdownizer-content-preview-host';
+export { LOADING_HIGHLIGHT_NAME, READY_HIGHLIGHT_NAME } from './preview-highlights';
 
 /**
  * Minimal structural interface for the CSS Custom Highlight registry.
@@ -49,6 +50,8 @@ export class ContentPreview {
     // ── MutationObserver state ──────────────────────────────────────────────
     private mutationObserver: MutationObserver | null = null;
     private rebuildPending: boolean = false;
+    private iframePreview = new IframeTextPreview();
+    private includeIframes = false;
 
     /**
      * Show the content preview for the given root element.
@@ -56,9 +59,10 @@ export class ContentPreview {
      * and registers a ready highlight. When boxed elements exist, creates
      * an isolated host overlay with `.content-preview-box` rectangles.
      */
-    show(root: HTMLElement): void {
+    show(root: HTMLElement, options: { includeIframes?: boolean } = {}): void {
         this.remove();
         this.rootRef = root;
+        this.includeIframes = options.includeIframes === true;
         const targets = collectContentPreviewTargets(root);
         this.textRanges = targets.textRanges;
         this.boxedElements = targets.boxedElements;
@@ -75,6 +79,8 @@ export class ContentPreview {
             this.createHost(root);
             this.updateBoxes();
         }
+
+        if (this.includeIframes) this.iframePreview.show(root);
 
         // Observe the selected root for mutations (not the host)
         this.startObserving(root);
@@ -96,6 +102,7 @@ export class ContentPreview {
         if (this.host) {
             this.host.setAttribute('data-preview-state', 'loading');
         }
+        this.iframePreview.setLoading();
     }
 
     /**
@@ -114,6 +121,18 @@ export class ContentPreview {
         if (this.host) {
             this.host.setAttribute('data-preview-state', 'ready');
         }
+        this.iframePreview.setReady();
+    }
+
+    /**
+     * Set iframe inclusion without re-collecting targets or recreating the host.
+     * Idempotent: if the value hasn't changed, nothing happens.
+     */
+    setIncludeIframes(enabled: boolean): void {
+        if (this.includeIframes === enabled) return;
+        this.includeIframes = enabled;
+        if (enabled && this.rootRef) this.iframePreview.show(this.rootRef);
+        if (!enabled) this.iframePreview.remove();
     }
 
     /**
@@ -128,9 +147,11 @@ export class ContentPreview {
         }
         this.stopObserving();
         this.removeHost();
+        this.iframePreview.remove();
         this.textRanges = [];
         this.boxedElements = [];
         this.rootRef = null;
+        this.includeIframes = false;
         this.state = 'ready';
     }
 
@@ -231,6 +252,9 @@ export class ContentPreview {
         } else if (this.host) {
             this.removeHost();
         }
+        // IframeTextPreview manages itself independently via its own
+        // MutationObserver and filtered load handlers, so parent-DOM rebuilds
+        // do not destroy all frame contexts and defeat incremental preview.
     }
 
     // ── Host overlay private helpers ────────────────────────────────────────
@@ -408,11 +432,11 @@ export interface ContentPreviewTargets {
  * - `visibility: hidden` or `visibility: collapse`
  * - `opacity: 0`
  */
-function isElementHidden(el: Element, boundary: Element): boolean {
+function isElementHidden(el: Element, boundary: Element, view: Window): boolean {
     let current: Element | null = el;
     while (current && current !== boundary) {
         if (current.hasAttribute('hidden')) return true;
-        const style = window.getComputedStyle(current);
+        const style = view.getComputedStyle(current);
         if (style.display === 'none') return true;
         if (style.visibility === 'hidden' || style.visibility === 'collapse') return true;
         if (parseFloat(style.opacity) === 0) return true;
@@ -448,9 +472,11 @@ function hasNonEmptyRect(rects: DOMRectList | DOMRect[]): boolean {
 export function collectContentPreviewTargets(root: HTMLElement): ContentPreviewTargets {
     const textRanges: Range[] = [];
     const boxedElements: HTMLElement[] = [];
+    const ownerDocument = root.ownerDocument;
+    const view = ownerDocument.defaultView ?? window;
 
     // ── Collect visible text ranges ───────────────────────────────────────────
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    const walker = ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
             // Skip empty/whitespace-only text
             const text = node.textContent;
@@ -470,7 +496,7 @@ export function collectContentPreviewTargets(root: HTMLElement): ContentPreviewT
                 return NodeFilter.FILTER_REJECT;
             }
             // Skip text in hidden elements (hidden attr, display:none, visibility:hidden/collapse, opacity:0)
-            if (isElementHidden(parent, root)) {
+            if (isElementHidden(parent, root, view)) {
                 return NodeFilter.FILTER_REJECT;
             }
             return NodeFilter.FILTER_ACCEPT;
@@ -479,7 +505,7 @@ export function collectContentPreviewTargets(root: HTMLElement): ContentPreviewT
 
     let textNode: Text | null;
     while ((textNode = walker.nextNode() as Text | null)) {
-        const range = document.createRange();
+        const range = ownerDocument.createRange();
         range.selectNodeContents(textNode);
         const rects = range.getClientRects();
         if (hasNonEmptyRect(rects)) {
@@ -504,7 +530,7 @@ export function collectContentPreviewTargets(root: HTMLElement): ContentPreviewT
             continue;
         }
 
-        const style = window.getComputedStyle(htmlEl);
+        const style = view.getComputedStyle(htmlEl);
 
         // Reject if display is none
         if (style.display === 'none') {

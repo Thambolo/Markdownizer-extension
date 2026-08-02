@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE } from '../src/content-preview';
-import { getBestContent, getVisibleBodyContent, getContentForMode } from '../src/extractor';
+import { getBestContent, getVisibleBodyContent, getContentForMode, hasEligibleIframesByExtraction, selectCaptureRoot } from '../src/extractor';
 import { skeletonize } from '../src/logic';
 
 // ── Stubs for ContentPreview browser APIs in JSDOM ───────────────────────────
@@ -132,6 +132,75 @@ function setupDOM(html: string): void {
 }
 
 describe('visible-body extraction', () => {
+    it('leaves iframe elements unchanged when iframe inclusion is disabled', () => {
+        setupDOM('<body><p>Before</p><iframe title="Widget"></iframe><p>After</p></body>');
+
+        const result = getVisibleBodyContent(document.body, { includeIframes: false });
+
+        expect(result?.element.querySelector('iframe')).not.toBeNull();
+        expect(result?.element.textContent).toContain('Before');
+        expect(result?.element.textContent).toContain('After');
+    });
+
+    it('replaces a readable iframe with labeled content at its original position', () => {
+        setupDOM('<body><p>Before</p><iframe title="Widget"></iframe><p>After</p></body>');
+        const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+        const frameDocument = new JSDOM('<body><h2>Embedded heading</h2><p>Embedded body</p></body>', {
+            url: 'https://frame.example.test/widget',
+        }).window.document;
+        Object.defineProperty(iframe, 'contentDocument', { configurable: true, get: () => frameDocument });
+
+        const result = getVisibleBodyContent(document.body, { includeIframes: true });
+        const sections = result?.element.querySelectorAll('section');
+
+        expect(sections).toHaveLength(1);
+        expect(result?.element.textContent).toContain('Before');
+        expect(result?.element.textContent).toContain('Embedded heading');
+        expect(result?.element.textContent).toContain('Embedded body');
+        expect(result?.element.textContent).toContain('After');
+        expect(result?.element.querySelector('iframe')).toBeNull();
+        expect(result?.element.innerHTML.indexOf('Before')).toBeLessThan(result?.element.innerHTML.indexOf('Embedded heading'));
+        expect(result?.element.innerHTML.indexOf('Embedded heading')).toBeLessThan(result?.element.innerHTML.indexOf('After'));
+    });
+
+    it('preserves live form-control values inside included iframe documents', () => {
+        setupDOM('<body><p>Before</p><iframe title="Widget"></iframe><p>After</p></body>');
+        const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+        const frameDocument = new JSDOM(
+            '<body><p>Embedded editor</p><textarea></textarea><input value="initial"></body>',
+            { url: 'https://frame.example.test/widget' },
+        ).window.document;
+        const editor = frameDocument.querySelector('textarea') as HTMLTextAreaElement;
+        editor.value = 'def answer():\n    return 42';
+        const input = frameDocument.querySelector('input') as HTMLInputElement;
+        input.value = 'live iframe value';
+        Object.defineProperty(iframe, 'contentDocument', { configurable: true, get: () => frameDocument });
+
+        const result = getVisibleBodyContent(document.body, { includeIframes: true });
+        const frameText = result?.element.querySelector('section')?.textContent ?? '';
+
+        expect(frameText).toContain('value: "def answer():\\n    return 42"');
+        expect(frameText).toContain('value: "live iframe value"');
+    });
+
+    it('reports an eligible iframe only when sanitized frame content is non-empty', () => {
+        setupDOM('<body><iframe id="empty"></iframe><iframe id="content"></iframe></body>');
+        const emptyFrame = document.querySelector('#empty') as HTMLIFrameElement;
+        const contentFrame = document.querySelector('#content') as HTMLIFrameElement;
+        const emptyDocument = new JSDOM('<body><script>ignore()</script></body>', {
+            url: 'https://frame.example.test/empty',
+        }).window.document;
+        const contentDocument = new JSDOM('<body><p>Embedded text</p></body>', {
+            url: 'https://frame.example.test/content',
+        }).window.document;
+        Object.defineProperty(emptyFrame, 'contentDocument', { configurable: true, get: () => emptyDocument });
+        Object.defineProperty(contentFrame, 'contentDocument', { configurable: true, get: () => contentDocument });
+
+        expect(hasEligibleIframesByExtraction(document.body)).toBe(true);
+        Object.defineProperty(contentFrame, 'contentDocument', { configurable: true, get: () => emptyDocument });
+        expect(hasEligibleIframesByExtraction(document.body)).toBe(false);
+    });
+
     it('uses a semantic main element before the visible body', () => {
         setupDOM('<body><header>Site nav</header><main><h1>Assignment</h1><p>Instructions</p></main></body>');
         const result = getBestContent();
@@ -262,5 +331,53 @@ describe('extraction modes', () => {
         expect(result?.sourceElement).toBe(document.body);
         expect(result?.strategy).toBe('visible-body');
         expect(result?.element.textContent).toContain('Outside main');
+    });
+});
+
+describe('selectCaptureRoot', () => {
+    it('returns article when it has ordinary text', () => {
+        setupDOM('<body><header>Nav</header><article><p>Article content</p></article></body>');
+        const root = selectCaptureRoot('smart');
+        expect(root?.tagName).toBe('ARTICLE');
+    });
+
+    it('falls back to main when article is absent', () => {
+        setupDOM('<body><header>Nav</header><main><p>Main content</p></main></body>');
+        const root = selectCaptureRoot('smart');
+        expect(root?.tagName).toBe('MAIN');
+    });
+
+    it('falls back to role-main when article and main are absent', () => {
+        setupDOM('<body><header>Nav</header><div role="main"><p>Role main content</p></div></body>');
+        const root = selectCaptureRoot('smart');
+        expect(root?.getAttribute('role')).toBe('main');
+    });
+
+    it('falls back to body when no semantic candidate has text', () => {
+        setupDOM('<body><article>   </article><div></div></body>');
+        const root = selectCaptureRoot('smart');
+        expect(root).toBe(document.body);
+    });
+
+    it('returns body for full-page mode regardless of semantic roots', () => {
+        setupDOM('<body><main><p>Main content</p></main></body>');
+        const root = selectCaptureRoot('full-page');
+        expect(root).toBe(document.body);
+    });
+
+    it('does not invoke cloneNode on the live DOM', () => {
+        setupDOM('<body><main><p>Content</p></main></body>');
+        const main = document.querySelector('main')!;
+        const spy = vi.spyOn(main, 'cloneNode');
+        selectCaptureRoot('smart');
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('does not invoke recoverGeneratedText', async () => {
+        const { recoverGeneratedText } = await import('../src/generated-text');
+        setupDOM('<body><main><p>Content</p></main></body>');
+        const spy = vi.spyOn(recoverGeneratedText as { apply: (...args: unknown[]) => unknown }, 'apply');
+        selectCaptureRoot('smart');
+        expect(spy).not.toHaveBeenCalled();
     });
 });

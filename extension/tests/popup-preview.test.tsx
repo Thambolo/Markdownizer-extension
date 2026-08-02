@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { PREVIEW_PORT_NAME, type CaptureMode } from '../src/preview-protocol';
+import { PREVIEW_PORT_NAME, type CaptureMode, type PreviewEligibilityMessage } from '../src/preview-protocol';
 
 // ── Chrome API Mocks ──────────────────────────────────────────────────────────
 
@@ -159,6 +159,8 @@ describe('openPreviewSession', () => {
 
     interface PreviewSession {
         show(captureMode: CaptureMode): void;
+        inspect(captureMode: CaptureMode, generation: number): void;
+        onEligibility(listener: (message: PreviewEligibilityMessage) => void): () => void;
         setLoading(): void;
         setReady(): void;
         hide(): void;
@@ -279,6 +281,39 @@ describe('openPreviewSession', () => {
         expect(lastPort!.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({ type: 'preview:show', sessionId: expect.any(String), captureMode: 'smart' })
         );
+        session.disconnect();
+    });
+
+    it('requests iframe eligibility and forwards eligibility responses', async () => {
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        const session = await openPreviewSession(42);
+        const listener = vi.fn();
+        session.onEligibility(listener);
+        session.inspect('full-page', 12);
+
+        expect(lastPort!.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'preview:inspect', captureMode: 'full-page', generation: 12 })
+        );
+
+        lastPort!.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: lastPort!.postMessage.mock.calls[0][0].sessionId,
+            captureMode: 'full-page',
+            generation: 12,
+            hasEligibleIframes: true,
+        });
+        expect(listener).toHaveBeenCalledWith(expect.objectContaining({ hasEligibleIframes: true }));
+
+        listener.mockClear();
+        lastPort!.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: 'stale-session',
+            captureMode: 'full-page',
+            generation: 12,
+            hasEligibleIframes: true,
+        });
+        expect(listener).not.toHaveBeenCalled();
         session.disconnect();
     });
 
@@ -449,11 +484,11 @@ describe('App popup lifecycle', () => {
             await new Promise(r => setTimeout(r, 50));
         });
 
-        // The session should NOT be opened because preview is disabled
-        // Note: tabs.connect is only called by openPreviewSession; if preview is disabled,
-        // openPreviewSession is never invoked, so tabs.connect should NOT have been called
-        // for the preview purpose. However, ensureContentScriptLoaded also calls sendMessage.
-        expect(chrome.tabs.connect).not.toHaveBeenCalled();
+        // The capture session remains open for iframe eligibility even when visual preview is disabled.
+        expect(chrome.tabs.connect).toHaveBeenCalled();
+        expect(lastPort!.postMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'preview:show' })
+        );
     });
 
     it('persists toggles and updates the current page immediately', async () => {
@@ -973,11 +1008,63 @@ describe('Capture full page toggle', () => {
         expect(chrome.tabs.connect).toHaveBeenCalled();
         const port = lastPort;
         expect(port).not.toBeNull();
-        
+
         // The first show() call should include captureMode: 'smart'
         expect(port!.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({ type: 'preview:show', captureMode: 'smart' })
         );
+    });
+
+    it('shows iframe inclusion only after eligibility and keeps opt-out session-only', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        const port = lastPort!;
+        const inspectMessage = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((message) => message.type === 'preview:inspect');
+        expect(inspectMessage).toBeDefined();
+        expect(document.querySelector('#include-iframes-toggle')).toBeNull();
+
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: inspectMessage!.sessionId,
+            captureMode: 'smart',
+            generation: inspectMessage!.generation,
+            hasEligibleIframes: true,
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 20));
+        });
+
+        const iframeToggle = document.querySelector('#include-iframes-toggle') as HTMLInputElement;
+        expect(iframeToggle).not.toBeNull();
+        expect(iframeToggle.checked).toBe(true);
+
+        port.postMessage.mockClear();
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(iframeToggle, false);
+            iframeToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        // Now sends preview:set-iframes instead of preview:show with includeIframes
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'preview:set-iframes', enabled: false })
+        );
+        for (const call of chrome.storage.local.set.mock.calls) {
+            expect(Object.keys(call[0])).not.toContain('includeIframes');
+        }
     });
 
     it('does not persist capture mode to storage', async () => {
@@ -1053,8 +1140,11 @@ describe('Capture full page toggle', () => {
             await new Promise(r => setTimeout(r, 50));
         });
 
-        // Session should not be opened when preview is disabled
-        expect(chrome.tabs.connect).not.toHaveBeenCalled();
+        // Session remains open for iframe eligibility, but visual preview is not shown.
+        expect(chrome.tabs.connect).toHaveBeenCalled();
+        expect(lastPort!.postMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'preview:show' })
+        );
     });
 
     it('sends show message only when preview is enabled and toggle changes', async () => {
@@ -1172,6 +1262,481 @@ describe('Capture full page toggle', () => {
         // Should send show with the current capture mode (full-page)
         expect(port.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({ type: 'preview:show', captureMode: 'full-page' })
+        );
+    });
+});
+
+// ── Task 2: Progressive iframe-only preview protocol ─────────────────────────
+
+describe('Task 2: progressive iframe-only preview protocol', () => {
+    let openPreviewSession: (tabId: number) => Promise<PreviewSession>;
+    let chrome: ReturnType<typeof createChromeMock>;
+
+    interface PreviewSession {
+        show(captureMode: CaptureMode): void;
+        inspect(captureMode: CaptureMode, generation: number): void;
+        onEligibility(listener: (message: PreviewEligibilityMessage) => void): () => void;
+        setLoading(): void;
+        setReady(): void;
+        hide(): void;
+        disconnect(): void;
+        setIncludeIframes(enabled: boolean): void;
+    }
+
+    beforeEach(async () => {
+        chrome = createChromeMock();
+        vi.stubGlobal('chrome', chrome);
+        vi.resetModules();
+        const mod = await import('../src/popup/preview-session');
+        openPreviewSession = mod.openPreviewSession;
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('sends setIncludeIframes command with correct structure', async () => {
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        const session = await openPreviewSession(42);
+        session.setIncludeIframes(true);
+
+        expect(lastPort).not.toBeNull();
+        expect(lastPort!.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'preview:set-iframes',
+                sessionId: expect.any(String),
+                enabled: true,
+            })
+        );
+        session.disconnect();
+    });
+
+    it('sends setIncludeIframes with enabled=false', async () => {
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        const session = await openPreviewSession(42);
+        session.setIncludeIframes(false);
+
+        expect(lastPort!.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'preview:set-iframes',
+                sessionId: expect.any(String),
+                enabled: false,
+            })
+        );
+        session.disconnect();
+    });
+
+    it('setIncludeIframes is safe after disconnection', async () => {
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        const session = await openPreviewSession(42);
+        session.disconnect();
+
+        // Should not throw
+        expect(() => session.setIncludeIframes(true)).not.toThrow();
+    });
+});
+
+// ── Task 3: popup startup progressive and race-safe ──────────────────────────
+
+describe('Task 3: popup startup progressive and race-safe', () => {
+    let chrome: ReturnType<typeof createChromeMock>;
+    let App: typeof import('../src/popup/App').App;
+    let render: typeof import('preact').render;
+    let act: typeof import('preact/test-utils').act;
+
+    beforeEach(async () => {
+        chrome = createChromeMock();
+        vi.stubGlobal('chrome', chrome);
+
+        // Stub the clipboard API
+        vi.stubGlobal('navigator', {
+            clipboard: {
+                writeText: vi.fn(async () => {}),
+            },
+        });
+
+        // Ensure document.body exists for Preact render
+        if (!document.body) {
+            document.body = document.createElement('body');
+        }
+        document.body.innerHTML = '<div id="app"></div>';
+
+        vi.resetModules();
+        const preact = await import('preact');
+        const testUtils = await import('preact/test-utils');
+        render = preact.render;
+        act = testUtils.act;
+        const appMod = await import('../src/popup/App');
+        App = appMod.App;
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        vi.restoreAllMocks();
+    });
+
+    it('does not show twice while initial eligibility resolves', async () => {
+        // Preview enabled, content script ready
+        chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        const port = lastPort!;
+        expect(port).not.toBeNull();
+
+        // Should have exactly one show() call during startup
+        const showCalls = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:show'
+        );
+        expect(showCalls.length).toBe(1);
+
+        // The show() call must be with capture mode only — no includeIframes in the show message
+        const showArgs = showCalls[0][0] as Record<string, unknown>;
+        expect(showArgs).toHaveProperty('captureMode', 'smart');
+        expect(showArgs).not.toHaveProperty('includeIframes');
+
+        // show() must be called BEFORE inspect() — show must precede inspect so the preview
+        // is visible while inspection runs for progressive rendering.
+        const inspectIdx = port.postMessage.mock.calls.findIndex(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:inspect'
+        );
+        const showIdx = port.postMessage.mock.calls.findIndex(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:show'
+        );
+        // show must come before inspect so the preview is visible while inspection runs
+        expect(showIdx).toBeLessThan(inspectIdx);
+
+        // Now emit an eligibility response
+        const inspectMessage = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((message) => message.type === 'preview:inspect');
+        expect(inspectMessage).toBeDefined();
+
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: inspectMessage!.sessionId,
+            captureMode: 'smart',
+            generation: inspectMessage!.generation,
+            hasEligibleIframes: true,
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 20));
+        });
+
+        // Should still have only one show() call (eligibility should not trigger another show)
+        const showCallsAfterEligibility = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:show'
+        );
+        expect(showCallsAfterEligibility.length).toBe(1);
+    });
+
+    it('keeps iframe inclusion on after off then on followed by eligibility', async () => {
+        // Preview enabled, content script ready
+        chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        const port = lastPort!;
+
+        // Wait for eligibility to arrive first (simulating initial inspection)
+        const inspectMessage = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((message) => message.type === 'preview:inspect');
+        expect(inspectMessage).toBeDefined();
+
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: inspectMessage!.sessionId,
+            captureMode: 'smart',
+            generation: inspectMessage!.generation,
+            hasEligibleIframes: true,
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 20));
+        });
+
+        // Verify iframe inclusion is on initially
+        expect(document.querySelector('#include-iframes-toggle')).not.toBeNull();
+        const iframeToggle = document.querySelector('#include-iframes-toggle') as HTMLInputElement;
+        expect(iframeToggle.checked).toBe(true);
+
+        // Turn iframe inclusion off
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(iframeToggle, false);
+            iframeToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 20));
+        });
+
+        // Turn iframe inclusion back on
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(iframeToggle, true);
+            iframeToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 20));
+        });
+
+        // Verify iframe inclusion is back on
+        expect(iframeToggle.checked).toBe(true);
+
+        // Now emit another eligibility response (simulating a new inspection)
+        port.postMessage.mockClear();
+
+        // Request a new inspection via mode change
+        port.postMessage.mockClear();
+        await act(async () => {
+            // Trigger a mode change to get a new inspection
+            const captureFullPageToggle = document.querySelector('#capture-full-page-toggle') as HTMLInputElement;
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(captureFullPageToggle, true);
+            captureFullPageToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 20));
+        });
+
+        // Mode change must show once (capture mode only, no includeIframes) and inspect once
+        const modeChangeShowCalls = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:show'
+        );
+        expect(modeChangeShowCalls.length).toBe(1);
+        const modeShowArgs = modeChangeShowCalls[0][0] as Record<string, unknown>;
+        expect(modeShowArgs).toHaveProperty('captureMode', 'full-page');
+        expect(modeShowArgs).not.toHaveProperty('includeIframes');
+
+        // show must be called BEFORE inspect during mode change
+        const modeChangeShowIdx = port.postMessage.mock.calls.findIndex(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:show'
+        );
+        const modeChangeInspectIdx = port.postMessage.mock.calls.findIndex(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:inspect'
+        );
+        expect(modeChangeShowIdx).toBeLessThan(modeChangeInspectIdx);
+
+        // Find the new inspect message
+        const newInspect = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((message) => message.type === 'preview:inspect');
+        expect(newInspect).toBeDefined();
+
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: newInspect!.sessionId,
+            captureMode: 'full-page',
+            generation: newInspect!.generation,
+            hasEligibleIframes: true,
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 20));
+        });
+
+        // Verify iframe inclusion is still on after eligibility
+        expect(iframeToggle.checked).toBe(true);
+    });
+
+    it('does not show or set iframe inclusion while Preview is disabled', async () => {
+        // Preview disabled from storage
+        chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: false });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        const port = lastPort!;
+        expect(port).not.toBeNull();
+
+        // Should not have any show() calls
+        const showCalls = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:show'
+        );
+        expect(showCalls.length).toBe(0);
+
+        // Should not have any setIncludeIframes calls
+        const setIframeCalls = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:set-iframes'
+        );
+        expect(setIframeCalls.length).toBe(0);
+
+        // Now emit an eligibility response (simulating inspection that happens even when preview is off)
+        const inspectMessage = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((message) => message.type === 'preview:inspect');
+        expect(inspectMessage).toBeDefined();
+
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: inspectMessage!.sessionId,
+            captureMode: 'smart',
+            generation: inspectMessage!.generation,
+            hasEligibleIframes: true,
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 20));
+        });
+
+        // Should still not have any show() calls
+        const showCallsAfter = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:show'
+        );
+        expect(showCallsAfter.length).toBe(0);
+
+        // Should still not have any setIncludeIframes calls
+        const setIframeCallsAfter = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:set-iframes'
+        );
+        expect(setIframeCallsAfter.length).toBe(0);
+    });
+
+    it('mode changes show once and inspect a new generation', async () => {
+        // Preview enabled, content script ready
+        chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        const port = lastPort!;
+        port.postMessage.mockClear(); // Clear initial show() and inspect() calls
+
+        // Change capture mode to full-page
+        const captureFullPageToggle = document.querySelector('#capture-full-page-toggle') as HTMLInputElement;
+        expect(captureFullPageToggle).not.toBeNull();
+
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(captureFullPageToggle, true);
+            captureFullPageToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        // Should have exactly one show() call
+        const showCalls = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:show'
+        );
+        expect(showCalls.length).toBe(1);
+
+        // Should have exactly one inspect() call
+        const inspectCalls = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => (call[0] as { type?: string }).type === 'preview:inspect'
+        );
+        expect(inspectCalls.length).toBe(1);
+
+        // The inspect should have a new generation
+        const inspectMessage = inspectCalls[0][0] as { generation?: number };
+        expect(inspectMessage.generation).toBe(1); // First inspection after startup
+    });
+
+    it('reapplies iframe inclusion after a capture-mode change resets the preview', async () => {
+        chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+
+        await act(async () => {
+            const container = document.getElementById('app')!;
+            render(<App />, container);
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        const port = lastPort!;
+        const initialInspect = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((message) => message.type === 'preview:inspect');
+        expect(initialInspect).toBeDefined();
+
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: initialInspect!.sessionId,
+            captureMode: 'smart',
+            generation: initialInspect!.generation,
+            hasEligibleIframes: true,
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 20));
+        });
+
+        const iframeToggle = document.querySelector('#include-iframes-toggle') as HTMLInputElement;
+        expect(iframeToggle).not.toBeNull();
+        expect(iframeToggle.checked).toBe(true);
+        port.postMessage.mockClear();
+
+        const captureFullPageToggle = document.querySelector('#capture-full-page-toggle') as HTMLInputElement;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(captureFullPageToggle, true);
+            captureFullPageToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+
+        const nextInspect = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((message) => message.type === 'preview:inspect');
+        expect(nextInspect).toBeDefined();
+
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: nextInspect!.sessionId,
+            captureMode: 'full-page',
+            generation: nextInspect!.generation,
+            hasEligibleIframes: true,
+        });
+
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 20));
+        });
+
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'preview:set-iframes', enabled: true })
         );
     });
 });

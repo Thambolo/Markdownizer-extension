@@ -7,6 +7,9 @@ export function Footer({
   togglePreview,
   captureFullPage,
   toggleCaptureFullPage,
+  iframeEligible,
+  includeIframes,
+  toggleIncludeIframes,
 }: {
   autoDownload: boolean;
   toggleAutoDownload: (e: Event) => void;
@@ -14,6 +17,9 @@ export function Footer({
   togglePreview: (e: Event) => void;
   captureFullPage: boolean;
   toggleCaptureFullPage: (e: Event) => void;
+  iframeEligible: boolean;
+  includeIframes: boolean;
+  toggleIncludeIframes: (e: Event) => void;
 }) {
   return (
     <footer class="border-t border-slate-800 bg-slate-950 px-4 py-3">
@@ -31,6 +37,14 @@ export function Footer({
           checked={captureFullPage}
           onChange={toggleCaptureFullPage}
         />
+        {iframeEligible && (
+          <Toggle
+            id="include-iframes-toggle"
+            label="Include iframes"
+            checked={includeIframes}
+            onChange={toggleIncludeIframes}
+          />
+        )}
         <Toggle
           id="auto-download-toggle"
           label="Auto-download on success"

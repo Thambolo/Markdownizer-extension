@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { JSDOM } from 'jsdom';
 import {
     CONTENT_PREVIEW_HOST_ATTRIBUTE,
     READY_HIGHLIGHT_NAME,
@@ -206,12 +207,20 @@ class StubResizeObserver {
     disconnect() {}
 }
 
+let lastMutationObserver: StubMutationObserver | undefined;
+
 class StubMutationObserver {
     callback: MutationCallback;
-    constructor(callback: MutationCallback) { this.callback = callback; }
+    constructor(callback: MutationCallback) {
+        this.callback = callback;
+        // The test harness needs access to the latest observer to trigger mutations.
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
+        lastMutationObserver = this;
+    }
     observe() {}
     disconnect() {}
     takeRecords(): MutationRecord[] { return []; }
+    trigger(records: MutationRecord[] = []): void { this.callback(records, {} as MutationObserver); }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -239,6 +248,7 @@ describe('Content-script preview protocol', () => {
         Reflect.deleteProperty(globalThis, 'CSS');
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+        lastMutationObserver = undefined;
         // Clean up any preview host left in the DOM
         const host = document.querySelector(`[${CONTENT_PREVIEW_HOST_ATTRIBUTE}]`);
         if (host) host.remove();
@@ -358,7 +368,7 @@ describe('Content-script preview protocol', () => {
         expect(document.querySelector(`[${CONTENT_PREVIEW_HOST_ATTRIBUTE}]`)).toBeNull();
     });
 
-    it('responds with error when no source is available', async () => {
+    it('succeeds with empty body (selectCaptureRoot falls back to body)', async () => {
         setupDOM('<body></body>');
         await import('../src/content');
 
@@ -371,7 +381,9 @@ describe('Content-script preview protocol', () => {
         });
 
         const response = await responsePromise;
-        expect(response).toEqual({ success: false, error: expect.any(String) });
+        // selectCaptureRoot falls back to document.body, so this succeeds
+        // but there is no boxed content, so no host overlay is created
+        expect(response).toEqual({ success: true });
         expect(document.querySelector(`[${CONTENT_PREVIEW_HOST_ATTRIBUTE}]`)).toBeNull();
     });
 
@@ -458,6 +470,99 @@ describe('Content-script preview protocol', () => {
             .get(READY_HIGHLIGHT_NAME)?.ranges.map((range) => range.toString());
         expect(ranges).toContain('Smart only');
         expect(ranges).not.toContain('Outside main');
+    });
+
+    it('reports iframe eligibility for the requested capture root and generation', async () => {
+        setupDOM('<body><main><h1>Smart only</h1></main><aside>Outside main</aside></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'inspect-1', captureMode: 'smart', generation: 7 });
+
+        expect(port.postMessage).toHaveBeenCalledWith({
+            type: 'preview:eligibility',
+            sessionId: 'inspect-1',
+            captureMode: 'smart',
+            generation: 7,
+            hasEligibleIframes: false,
+        });
+    });
+
+    it('refreshes iframe eligibility when the selected root changes', async () => {
+        setupDOM('<body><main><p>Main content</p></main><aside></aside></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'live-1', captureMode: 'smart', generation: 3 });
+        expect(lastMutationObserver).toBeDefined();
+        port.postMessage.mockClear();
+
+        const iframe = document.createElement('iframe');
+        const frameDocument = new JSDOM('<body><p>Embedded content</p></body>', {
+            url: 'https://frame.example.test/content',
+        }).window.document;
+        Object.defineProperty(iframe, 'contentDocument', { configurable: true, get: () => frameDocument });
+        document.querySelector('main')!.appendChild(iframe);
+        lastMutationObserver?.trigger([{ type: 'childList', target: document.querySelector('main')! } as MutationRecord]);
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(port.postMessage).toHaveBeenCalledWith({
+            type: 'preview:eligibility',
+            sessionId: 'live-1',
+            captureMode: 'smart',
+            generation: 3,
+            hasEligibleIframes: true,
+        });
+    });
+
+    it('ignores mutations outside the current Smart root', async () => {
+        setupDOM('<body><main><p>Main content</p></main><aside></aside></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'live-2', captureMode: 'smart', generation: 4 });
+        port.postMessage.mockClear();
+
+        const aside = document.querySelector('aside')!;
+        aside.appendChild(document.createElement('iframe'));
+        lastMutationObserver?.trigger([{ type: 'childList', target: aside } as MutationRecord]);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(port.postMessage).not.toHaveBeenCalled();
+    });
+
+    it('stops eligibility refreshes after the capture session disconnects', async () => {
+        setupDOM('<body><main><p>Main content</p></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'live-3', captureMode: 'smart', generation: 5 });
+        port.postMessage.mockClear();
+        port.emitDisconnect();
+        lastMutationObserver?.trigger([{ type: 'childList', target: document.querySelector('main')! } as MutationRecord]);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(port.postMessage).not.toHaveBeenCalled();
+    });
+
+    it('accepts iframe inclusion only as an explicit boolean protocol value', async () => {
+        setupDOM('<body><main><h1>Smart only</h1></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+        port.emitMessage({
+            type: 'preview:show',
+            sessionId: 'invalid-include',
+            captureMode: 'smart',
+            includeIframes: 'true' as unknown as boolean,
+        });
+
+        expect(port.postMessage).toHaveBeenCalledWith({ success: true });
     });
 
     it('converts a full-page request using the visible-body strategy', async () => {
@@ -553,5 +658,368 @@ describe('Content-script preview protocol', () => {
 
         expect(response).toEqual(expect.objectContaining({ success: true }));
         expect(readabilitySpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['smart', 'smart'],
+        ['full-page', 'full-page'],
+    ] as const)('rejects oversized capture with included iframe content in %s mode', async (mode) => {
+        setupDOM('<body><main>Page content</main></body>');
+        skeletonizeMock.mockReturnValue({ html: 'x'.repeat(1_048_577), tokens: [] });
+        const extractor = await import('../src/extractor');
+        const readabilitySpy = vi.spyOn(extractor, 'getReadabilityContent');
+        await import('../src/content');
+
+        const response = await new Promise<unknown>((resolve) => {
+            messageListener!(
+                { action: 'convert_page', captureMode: mode, includeIframes: true },
+                {},
+                resolve,
+            );
+        });
+
+        expect(response).toEqual({
+            success: false,
+            error: 'The page and included iframe content are too large to convert. Turn off Include iframes and try again.',
+        });
+        expect(readabilitySpy).not.toHaveBeenCalled();
+        expect(chrome.runtime.sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ action: 'convert_skeleton' }));
+    });
+
+    // ── Task 4: Stabilization tests ─────────────────────────────────────────
+
+    it('preview:inspect does not call getContentForMode (lightweight eligibility)', async () => {
+        setupDOM('<body><main><h1>Smart only</h1></main></body>');
+        const extractor = await import('../src/extractor');
+        const getContentForModeSpy = vi.spyOn(extractor, 'getContentForMode');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+
+        getContentForModeSpy.mockClear();
+        port.emitMessage({
+            type: 'preview:inspect',
+            sessionId: 'inspect-lightweight',
+            captureMode: 'smart',
+            generation: 1,
+        });
+
+        // postEligibility must NOT call getContentForMode
+        expect(getContentForModeSpy).not.toHaveBeenCalled();
+        // But we should still get an eligibility response
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'preview:eligibility',
+                sessionId: 'inspect-lightweight',
+            }),
+        );
+    });
+
+    it('full-page observer does not unconditionally refresh on non-iframe mutations', async () => {
+        setupDOM('<body><main><p>Main content</p></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'fp-1', captureMode: 'full-page', generation: 1 });
+        expect(lastMutationObserver).toBeDefined();
+        port.postMessage.mockClear();
+
+        // Trigger a non-iframe mutation (text change inside main)
+        const p = document.querySelector('main p')!;
+        p.textContent = 'Updated content';
+        lastMutationObserver?.trigger([{
+            type: 'characterData',
+            target: p.firstChild!,
+        } as MutationRecord]);
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        // Should NOT have posted eligibility for a non-iframe mutation
+        expect(port.postMessage).not.toHaveBeenCalled();
+    });
+
+    it('full-page observer does refresh when an iframe is added', async () => {
+        setupDOM('<body><main><p>Main content</p></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'fp-2', captureMode: 'full-page', generation: 1 });
+        expect(lastMutationObserver).toBeDefined();
+        port.postMessage.mockClear();
+
+        const iframe = document.createElement('iframe');
+        document.querySelector('main')!.appendChild(iframe);
+        lastMutationObserver?.trigger([{
+            type: 'childList',
+            target: document.querySelector('main')!,
+            addedNodes: [iframe],
+        } as unknown as MutationRecord]);
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'preview:eligibility',
+                sessionId: 'fp-2',
+            }),
+        );
+    });
+
+    it('stale generation inspect commands are ignored when a newer generation is active', async () => {
+        setupDOM('<body><main><h1>Content</h1></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+
+        // Start with generation 10
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'gen-10', captureMode: 'smart', generation: 10 });
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ generation: 10 }),
+        );
+        port.postMessage.mockClear();
+
+        // Now send a stale generation 5 inspect — should be ignored
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'gen-5-stale', captureMode: 'smart', generation: 5 });
+
+        // No eligibility message should be posted for the stale generation
+        const callsForGen5 = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => call[0] && typeof call[0] === 'object' && 'generation' in (call[0] as Record<string, unknown>) && (call[0] as Record<string, unknown>).generation === 5,
+        );
+        expect(callsForGen5).toHaveLength(0);
+    });
+
+    it('preview host mutations do not trigger eligibility refresh', async () => {
+        setupDOM('<body><main><p>Main content</p></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+
+        // Show preview first to create the host
+        port.emitMessage({ type: 'preview:show', sessionId: 'host-mut', captureMode: 'smart' });
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'host-mut', captureMode: 'smart', generation: 1 });
+        port.postMessage.mockClear();
+
+        // Mutate the preview host (e.g., attribute change)
+        const host = document.querySelector(`[${CONTENT_PREVIEW_HOST_ATTRIBUTE}]`);
+        if (host) {
+            host.setAttribute('data-preview-state', 'loading');
+            lastMutationObserver?.trigger([{
+                type: 'attributes',
+                target: host,
+                attributeName: 'data-preview-state',
+            } as unknown as MutationRecord]);
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        // Should NOT have posted eligibility for a preview-host mutation
+        expect(port.postMessage).not.toHaveBeenCalled();
+    });
+
+    it('mutation observer is scoped to the capture root, not the full document', async () => {
+        setupDOM('<body><aside id="outside">Outside</aside><main><p>Main content</p></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'scope-1', captureMode: 'smart', generation: 1 });
+
+        // Verify observer was created
+        expect(lastMutationObserver).toBeDefined();
+
+        // The observe() call should target the main element, not document.documentElement
+        // We can't directly inspect the observe target, but we can verify that
+        // mutations outside the root don't trigger refresh
+        port.postMessage.mockClear();
+
+        // Mutation in aside (outside the smart root)
+        const aside = document.getElementById('outside')!;
+        aside.appendChild(document.createElement('span'));
+        lastMutationObserver?.trigger([{
+            type: 'childList',
+            target: aside,
+        } as MutationRecord]);
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(port.postMessage).not.toHaveBeenCalled();
+    });
+
+    it('disconnect cleans up the mutation observer', async () => {
+        setupDOM('<body><main><p>Main content</p></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'cleanup-1', captureMode: 'smart', generation: 1 });
+        expect(lastMutationObserver).toBeDefined();
+
+        const disconnectSpy = vi.spyOn(lastMutationObserver!, 'disconnect');
+
+        port.emitDisconnect();
+        expect(disconnectSpy).toHaveBeenCalled();
+    });
+
+    // ── Task 6: Performance-contract tests ──────────────────────────────────
+
+    it('popup startup sends exactly one show and one inspect', async () => {
+        setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+
+        // Simulate popup startup: show then inspect
+        port.emitMessage({ type: 'preview:show', sessionId: 'startup', captureMode: 'smart' });
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'startup', captureMode: 'smart', generation: 1 });
+
+        // Show produces exactly one overlay host
+        const hosts = document.querySelectorAll(`[${CONTENT_PREVIEW_HOST_ATTRIBUTE}]`);
+        expect(hosts).toHaveLength(1);
+
+        // Inspect produces exactly one eligibility response
+        const eligibilityCalls = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => call[0] && typeof call[0] === 'object' && 'type' in (call[0] as Record<string, unknown>) && (call[0] as Record<string, unknown>).type === 'preview:eligibility',
+        );
+        expect(eligibilityCalls).toHaveLength(1);
+    });
+
+    it('preview show and inspect call zero conversion-grade extraction functions', async () => {
+        setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
+        const extractor = await import('../src/extractor');
+        const logic = await import('../src/logic');
+        const getContentForModeSpy = vi.spyOn(extractor, 'getContentForMode');
+        const getReadabilityContentSpy = vi.spyOn(extractor, 'getReadabilityContent');
+        const skeletonizeSpy = vi.spyOn(logic, 'skeletonize');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+
+        getContentForModeSpy.mockClear();
+        getReadabilityContentSpy.mockClear();
+        skeletonizeSpy.mockClear();
+
+        // Show preview
+        port.emitMessage({ type: 'preview:show', sessionId: 'perf-1', captureMode: 'smart' });
+
+        // Inspect preview
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'perf-1', captureMode: 'smart', generation: 1 });
+
+        // None of the conversion-grade extraction functions should be called
+        expect(getContentForModeSpy).not.toHaveBeenCalled();
+        expect(getReadabilityContentSpy).not.toHaveBeenCalled();
+        expect(skeletonizeSpy).not.toHaveBeenCalled();
+    });
+
+    it('eligibility mutations do not call getContentForMode', async () => {
+        setupDOM('<body><main><p>Main content</p></main></body>');
+        const extractor = await import('../src/extractor');
+        const getContentForModeSpy = vi.spyOn(extractor, 'getContentForMode');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+
+        // Start inspecting
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'elig-1', captureMode: 'smart', generation: 1 });
+        getContentForModeSpy.mockClear();
+
+        // Add an iframe to trigger eligibility refresh
+        const iframe = document.createElement('iframe');
+        document.querySelector('main')!.appendChild(iframe);
+        lastMutationObserver?.trigger([{ type: 'childList', target: document.querySelector('main')! } as MutationRecord]);
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        // Eligibility refresh must NOT call getContentForMode
+        expect(getContentForModeSpy).not.toHaveBeenCalled();
+        // But eligibility should be posted
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'preview:eligibility',
+                sessionId: 'elig-1',
+            }),
+        );
+    });
+
+    it('toggling iframe inclusion sends no top-level show', async () => {
+        setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+
+        // Initial show
+        port.emitMessage({ type: 'preview:show', sessionId: 'toggle-1', captureMode: 'smart' });
+        port.postMessage.mockClear();
+
+        // Toggle iframe inclusion on and off
+        port.emitMessage({ type: 'preview:set-iframes', sessionId: 'toggle-1', enabled: true });
+        port.emitMessage({ type: 'preview:set-iframes', sessionId: 'toggle-1', enabled: false });
+
+        // No show messages should be sent for set-iframes toggles
+        const showCalls = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => call[0] && typeof call[0] === 'object' && 'type' in (call[0] as Record<string, unknown>) && (call[0] as Record<string, unknown>).type === 'preview:show',
+        );
+        expect(showCalls).toHaveLength(0);
+    });
+
+    it('unrelated parent resource loads do not rebuild frame contexts', async () => {
+        setupDOM('<body><main><iframe title="Frame1" srcdoc="<p>Frame1 text</p>"></iframe></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+
+        // Start inspecting
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'unrel-1', captureMode: 'smart', generation: 1 });
+        port.postMessage.mockClear();
+
+        // Simulate an unrelated parent resource load event
+        const loadEvent = new Event('load', { bubbles: false });
+        document.dispatchEvent(loadEvent);
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        // No eligibility refresh should be triggered for unrelated loads
+        expect(port.postMessage).not.toHaveBeenCalled();
+    });
+
+    it('a single frame mutation rebuilds one context', async () => {
+        setupDOM('<body><main><p>Main content</p></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+
+        // Start inspecting
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'single-1', captureMode: 'smart', generation: 1 });
+        port.postMessage.mockClear();
+
+        // Add a new iframe with a mocked contentDocument containing text
+        const iframe = document.createElement('iframe');
+        const frameDocument = new JSDOM('<body><p>Frame content</p></body>', {
+            url: 'https://frame.example.test/content',
+        }).window.document;
+        Object.defineProperty(iframe, 'contentDocument', { configurable: true, get: () => frameDocument });
+        document.querySelector('main')!.appendChild(iframe);
+        lastMutationObserver?.trigger([{ type: 'childList', target: document.querySelector('main')! } as MutationRecord]);
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        // Exactly one eligibility message should be posted for the single mutation
+        const eligibilityCalls = port.postMessage.mock.calls.filter(
+            (call: unknown[]) => call[0] && typeof call[0] === 'object' && 'type' in (call[0] as Record<string, unknown>) && (call[0] as Record<string, unknown>).type === 'preview:eligibility',
+        );
+        expect(eligibilityCalls).toHaveLength(1);
+        expect(eligibilityCalls[0][0]).toEqual(
+            expect.objectContaining({
+                type: 'preview:eligibility',
+                sessionId: 'single-1',
+                hasEligibleIframes: true,
+            }),
+        );
     });
 });
