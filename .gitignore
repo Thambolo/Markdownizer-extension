@@ -54,3 +54,6 @@ trivy-results.sarif
 # Agent Context
 GEMINI.md
 dev_helpers/
+
+# Superpowers workspace state
+.superpowers/
