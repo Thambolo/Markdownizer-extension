@@ -12,6 +12,7 @@
     "test:browser": "vitest --config vitest.browser.config.ts --run"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "preact": "^10.19.0",
     "remark": "^15.0.1",
     "remark-gfm": "^4.0.1",

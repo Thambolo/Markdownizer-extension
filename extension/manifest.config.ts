@@ -51,6 +51,9 @@ export default defineManifest(async (env) => {
     host_permissions: [
       getApiMatchPattern(loadedEnv)
     ],
+    optional_host_permissions: [
+      "<all_urls>"
+    ],
     action: {
       default_popup: "index.html",
       default_icon: {
