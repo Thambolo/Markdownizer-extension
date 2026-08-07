@@ -26,4 +26,5 @@ export interface PreviewEligibilityMessage {
     captureMode: CaptureMode;
     generation: number;
     hasEligibleIframes: boolean;
+    hasImages: boolean;
 }

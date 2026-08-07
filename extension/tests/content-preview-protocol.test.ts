@@ -486,6 +486,7 @@ describe('Content-script preview protocol', () => {
             captureMode: 'smart',
             generation: 7,
             hasEligibleIframes: false,
+            hasImages: false,
         });
     });
 
@@ -514,6 +515,7 @@ describe('Content-script preview protocol', () => {
             captureMode: 'smart',
             generation: 3,
             hasEligibleIframes: true,
+            hasImages: false,
         });
     });
 
@@ -1019,6 +1021,7 @@ describe('Content-script preview protocol', () => {
                 type: 'preview:eligibility',
                 sessionId: 'single-1',
                 hasEligibleIframes: true,
+                hasImages: false,
             }),
         );
     });

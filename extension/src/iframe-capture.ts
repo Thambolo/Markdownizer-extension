@@ -236,3 +236,21 @@ export function hasEligibleIframesLightweight(sourceRoot: HTMLElement): boolean 
 
     return false;
 }
+
+/**
+ * Lightweight image eligibility check: true when the root contains at least
+ * one `<img>` that could be bundled — non-empty src, not a blob: URL (page-
+ * scoped, unfetchable from the popup), and not a confirmed 1x1 tracking
+ * pixel. Not-yet-loaded images (naturalWidth 0) count as eligible; the
+ * bundle step filters failures anyway. No clones, no serialization.
+ */
+export function hasImagesInRoot(sourceRoot: HTMLElement): boolean {
+    for (const img of sourceRoot.querySelectorAll<HTMLImageElement>('img')) {
+        const src = img.getAttribute('src');
+        if (!src || src.startsWith('blob:')) continue;
+        const loaded = img.complete && img.naturalWidth > 0 && img.naturalHeight > 0;
+        if (loaded && img.naturalWidth <= 1 && img.naturalHeight <= 1) continue;
+        return true;
+    }
+    return false;
+}

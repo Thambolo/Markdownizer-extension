@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import {
     IFRAME_MAX_DEPTH,
     IFRAME_MAX_COUNT,
@@ -461,5 +461,65 @@ describe('hasEligibleIframesLightweight', () => {
         } finally {
             restore();
         }
+    });
+});
+describe('hasImagesInRoot', () => {
+    let hasImagesInRoot: (root: HTMLElement) => boolean;
+
+    beforeEach(async () => {
+        vi.resetModules();
+        const mod = await import('../src/iframe-capture');
+        hasImagesInRoot = mod.hasImagesInRoot;
+    });
+
+    it('returns false for an empty root', () => {
+        const root = document.createElement('div');
+        expect(hasImagesInRoot(root)).toBe(false);
+    });
+
+    it('returns true for an img with a non-empty src', () => {
+        const root = document.createElement('div');
+        root.innerHTML = '<img src="https://example.com/a.png">';
+        expect(hasImagesInRoot(root)).toBe(true);
+    });
+
+    it('skips imgs with an empty src', () => {
+        const root = document.createElement('div');
+        root.innerHTML = '<img src="">';
+        expect(hasImagesInRoot(root)).toBe(false);
+    });
+
+    it('skips blob: URLs (unfetchable from the popup)', () => {
+        const root = document.createElement('div');
+        root.innerHTML = '<img src="blob:https://example.com/uuid">';
+        expect(hasImagesInRoot(root)).toBe(false);
+    });
+
+    it('skips confirmed 1x1 tracking pixels', () => {
+        const root = document.createElement('div');
+        const img = document.createElement('img');
+        img.src = 'https://example.com/pixel.gif';
+        Object.defineProperty(img, 'complete', { value: true });
+        Object.defineProperty(img, 'naturalWidth', { value: 1 });
+        Object.defineProperty(img, 'naturalHeight', { value: 1 });
+        root.appendChild(img);
+        expect(hasImagesInRoot(root)).toBe(false);
+    });
+
+    it('counts not-yet-loaded imgs (naturalWidth 0) as eligible', () => {
+        const root = document.createElement('div');
+        const img = document.createElement('img');
+        img.src = 'https://example.com/photo.jpg';
+        Object.defineProperty(img, 'complete', { value: false });
+        Object.defineProperty(img, 'naturalWidth', { value: 0 });
+        Object.defineProperty(img, 'naturalHeight', { value: 0 });
+        root.appendChild(img);
+        expect(hasImagesInRoot(root)).toBe(true);
+    });
+
+    it('returns true when only some imgs are usable', () => {
+        const root = document.createElement('div');
+        root.innerHTML = '<img src="blob:x"><img src="https://example.com/b.png">';
+        expect(hasImagesInRoot(root)).toBe(true);
     });
 });

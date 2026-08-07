@@ -302,6 +302,7 @@ describe('openPreviewSession', () => {
             captureMode: 'full-page',
             generation: 12,
             hasEligibleIframes: true,
+            hasImages: false,
         });
         expect(listener).toHaveBeenCalledWith(expect.objectContaining({ hasEligibleIframes: true }));
 
@@ -312,6 +313,7 @@ describe('openPreviewSession', () => {
             captureMode: 'full-page',
             generation: 12,
             hasEligibleIframes: true,
+            hasImages: false,
         });
         expect(listener).not.toHaveBeenCalled();
         session.disconnect();
@@ -1041,6 +1043,7 @@ describe('Capture full page toggle', () => {
             captureMode: 'smart',
             generation: inspectMessage!.generation,
             hasEligibleIframes: true,
+            hasImages: false,
         });
 
         await act(async () => {
@@ -1429,6 +1432,7 @@ describe('Task 3: popup startup progressive and race-safe', () => {
             captureMode: 'smart',
             generation: inspectMessage!.generation,
             hasEligibleIframes: true,
+            hasImages: false,
         });
 
         await act(async () => {
@@ -1470,6 +1474,7 @@ describe('Task 3: popup startup progressive and race-safe', () => {
             captureMode: 'smart',
             generation: inspectMessage!.generation,
             hasEligibleIframes: true,
+            hasImages: false,
         });
 
         await act(async () => {
@@ -1553,6 +1558,7 @@ describe('Task 3: popup startup progressive and race-safe', () => {
             captureMode: 'full-page',
             generation: newInspect!.generation,
             hasEligibleIframes: true,
+            hasImages: false,
         });
 
         await act(async () => {
@@ -1604,6 +1610,7 @@ describe('Task 3: popup startup progressive and race-safe', () => {
             captureMode: 'smart',
             generation: inspectMessage!.generation,
             hasEligibleIframes: true,
+            hasImages: false,
         });
 
         await act(async () => {
@@ -1696,6 +1703,7 @@ describe('Task 3: popup startup progressive and race-safe', () => {
             captureMode: 'smart',
             generation: initialInspect!.generation,
             hasEligibleIframes: true,
+            hasImages: false,
         });
 
         await act(async () => {
@@ -1729,6 +1737,7 @@ describe('Task 3: popup startup progressive and race-safe', () => {
             captureMode: 'full-page',
             generation: nextInspect!.generation,
             hasEligibleIframes: true,
+            hasImages: false,
         });
 
         await act(async () => {

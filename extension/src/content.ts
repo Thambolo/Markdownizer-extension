@@ -1,6 +1,6 @@
 import './content-preview.css';
 import { getContentForMode, getReadabilityContent, selectCaptureRoot } from './extractor';
-import { hasEligibleIframesLightweight } from './iframe-capture';
+import { hasEligibleIframesLightweight, hasImagesInRoot } from './iframe-capture';
 import { skeletonize, rehydrateMarkdown } from './logic';
 import { shouldUseReadability } from './payload';
 import { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE } from './content-preview';
@@ -66,6 +66,7 @@ chrome.runtime.onConnect.addListener((port) => {
             captureMode: latestInspection.captureMode,
             generation: latestInspection.generation,
             hasEligibleIframes: hasEligibleIframesLightweight(root),
+            hasImages: hasImagesInRoot(root),
         };
         port.postMessage(response);
     };
@@ -93,19 +94,22 @@ chrome.runtime.onConnect.addListener((port) => {
         return false;
     };
 
-    /** Check whether a mutation record involves iframe additions or attribute changes. */
-    const isIframeRelevantMutation = (record: MutationRecord): boolean => {
+    /** Check whether a mutation record involves iframes or images. */
+    const isCaptureRelevantMutation = (record: MutationRecord): boolean => {
         if (isPreviewHostMutation(record)) return false;
 
-        // Target is an iframe itself
+        // Target is an iframe or image element itself (e.g. src attribute change)
         if (record.target instanceof HTMLIFrameElement) return true;
+        if (record.target instanceof HTMLImageElement) return true;
 
-        // Added nodes include an iframe
+        // Added nodes include an iframe or image
         if (record.type === 'childList' && record.addedNodes?.length) {
-            const addedIframe = Array.from(record.addedNodes).some(
-                (node) => node instanceof Element && (node.matches('iframe') || node.querySelector('iframe')),
+            const addedRelevant = Array.from(record.addedNodes).some(
+                (node) =>
+                    node instanceof Element &&
+                    (node.matches('iframe,img') || node.querySelector('iframe,img')),
             );
-            if (addedIframe) return true;
+            if (addedRelevant) return true;
         }
 
         // Attribute change on an iframe within the cached root
@@ -118,7 +122,7 @@ chrome.runtime.onConnect.addListener((port) => {
 
     const handleMutations = (records: MutationRecord[]): void => {
         if (!watcherActive) return;
-        if (records.some((record) => isIframeRelevantMutation(record))) {
+        if (records.some((record) => isCaptureRelevantMutation(record))) {
             scheduleEligibilityRefresh();
         }
     };
