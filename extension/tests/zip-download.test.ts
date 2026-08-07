@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { collectImageNodes, assignLocalPaths, rewriteImageReferences } from '../src/popup/zip-download';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    collectImageNodes,
+    assignLocalPaths,
+    rewriteImageReferences,
+    fetchImageBytes,
+    downloadAllImages,
+} from '../src/popup/zip-download';
 
 describe('collectImageNodes', () => {
     it('finds image nodes with positions', () => {
@@ -71,5 +77,71 @@ describe('rewriteImageReferences', () => {
         const mapping = new Map([['https://e.com/a.png', 'images/img-001.png']]);
         const out = rewriteImageReferences(md, mapping);
         expect(out).toBe('![Weird \\[alt\\] text](images/img-001.png)');
+    });
+});
+
+describe('fetchImageBytes', () => {
+    const originalFetch = globalThis.fetch;
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        vi.restoreAllMocks();
+    });
+
+    it('decodes data: URLs without fetching', async () => {
+        globalThis.fetch = vi.fn(async () => {
+            throw new Error('should not fetch data URLs');
+        }) as unknown as typeof fetch;
+        const bytes = await fetchImageBytes('data:image/png;base64,aGVsbG8=');
+        expect(bytes).not.toBeNull();
+        expect(new TextDecoder().decode(bytes!)).toBe('hello');
+    });
+
+    it('returns null for blob: URLs', async () => {
+        expect(await fetchImageBytes('blob:https://e.com/uuid')).toBeNull();
+    });
+
+    it('fetches a URL and returns bytes', async () => {
+        globalThis.fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))) as unknown as typeof fetch;
+        const bytes = await fetchImageBytes('https://e.com/a.png');
+        expect(Array.from(bytes!)).toEqual([1, 2, 3]);
+    });
+
+    it('returns null for oversized bodies', async () => {
+        const big = new Uint8Array(1024).fill(7);
+        globalThis.fetch = vi.fn(async () => new Response(big)) as unknown as typeof fetch;
+        expect(await fetchImageBytes('https://e.com/big.png', { maxBytes: 100 })).toBeNull();
+    });
+
+    it('returns null when fetch rejects', async () => {
+        globalThis.fetch = vi.fn(async () => { throw new Error('network'); }) as unknown as typeof fetch;
+        expect(await fetchImageBytes('https://e.com/fail.png')).toBeNull();
+    });
+});
+
+describe('downloadAllImages', () => {
+    const originalFetch = globalThis.fetch;
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        vi.restoreAllMocks();
+    });
+
+    it('bundles fetchable urls and skips failures', async () => {
+        globalThis.fetch = vi.fn(async (url: string) =>
+            url.includes('ok') ? new Response(new Uint8Array([9])) : Promise.reject(new Error('no')),
+        ) as unknown as typeof fetch;
+        const { bundled, skipped } = await downloadAllImages(['https://e.com/ok.png', 'https://e.com/bad.png']);
+        expect(bundled.size).toBe(1);
+        expect(skipped).toEqual(['https://e.com/bad.png']);
+    });
+
+    it('stops bundling once the total cap is reached', async () => {
+        const chunk = new Uint8Array(10).fill(1);
+        globalThis.fetch = vi.fn(async () => new Response(chunk)) as unknown as typeof fetch;
+        const { bundled, skipped } = await downloadAllImages(
+            ['https://e.com/a.png', 'https://e.com/b.png', 'https://e.com/c.png'],
+            { maxTotalBytes: 15 },
+        );
+        expect(bundled.size).toBe(1);
+        expect(skipped).toEqual(['https://e.com/b.png', 'https://e.com/c.png']);
     });
 });

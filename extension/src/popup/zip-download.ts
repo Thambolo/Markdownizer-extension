@@ -100,3 +100,105 @@ export function rewriteImageReferences(markdown: string, mapping: Map<string, st
     parts.push(markdown.slice(cursor));
     return parts.join('');
 }
+
+export interface DownloadCaps {
+    timeoutMs?: number;
+    maxBytesPerImage?: number;
+    maxTotalBytes?: number;
+}
+
+const DEFAULT_TIMEOUT_MS = 20_000;
+const DEFAULT_MAX_BYTES_PER_IMAGE = 15 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_BYTES = 60 * 1024 * 1024;
+
+/**
+ * Fetch one image's bytes. Returns null when the image is unfetchable
+ * (blob: URLs), too large, or the request fails or times out.
+ */
+export async function fetchImageBytes(
+    url: string,
+    options: { timeoutMs?: number; maxBytes?: number } = {},
+): Promise<Uint8Array | null> {
+    const { timeoutMs = DEFAULT_TIMEOUT_MS, maxBytes = DEFAULT_MAX_BYTES_PER_IMAGE } = options;
+
+    if (url.startsWith('blob:')) return null;
+
+    try {
+        if (url.startsWith('data:')) {
+            // Decode locally; data: URLs must never hit the network.
+            const bytes = decodeDataUrl(url);
+            return bytes !== null && bytes.byteLength <= maxBytes ? bytes : null;
+        }
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const response = await fetch(url, { signal: controller.signal });
+            if (!response.ok) return null;
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            if (bytes.byteLength > maxBytes) return null;
+            return bytes;
+        } finally {
+            clearTimeout(timer);
+        }
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Decode a data: URL payload into bytes without touching the network.
+ * Handles base64 payloads and percent-encoded text; returns null when
+ * the payload is malformed.
+ */
+function decodeDataUrl(url: string): Uint8Array | null {
+    const comma = url.indexOf(',');
+    if (comma === -1) return null;
+    const meta = url.slice(5, comma);
+    const payload = url.slice(comma + 1);
+    try {
+        if (/;base64$/i.test(meta)) {
+            const binary = atob(payload);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+            return bytes;
+        }
+        return new TextEncoder().encode(decodeURIComponent(payload));
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Fetch all unique image URLs, honoring per-image and total byte caps.
+ * `urls` must be deduped by the caller (assignLocalPaths input order).
+ */
+export async function downloadAllImages(
+    urls: string[],
+    caps: DownloadCaps = {},
+): Promise<{ bundled: Map<string, Uint8Array>; skipped: string[] }> {
+    const maxBytesPerImage = caps.maxBytesPerImage ?? DEFAULT_MAX_BYTES_PER_IMAGE;
+    const maxTotalBytes = caps.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES;
+    const bundled = new Map<string, Uint8Array>();
+    const skipped: string[] = [];
+    let total = 0;
+
+    for (const url of urls) {
+        if (total >= maxTotalBytes) {
+            skipped.push(url);
+            continue;
+        }
+        const bytes = await fetchImageBytes(url, { timeoutMs: caps.timeoutMs, maxBytes: maxBytesPerImage });
+        if (!bytes) {
+            skipped.push(url);
+            continue;
+        }
+        if (total + bytes.byteLength > maxTotalBytes) {
+            skipped.push(url);
+            continue;
+        }
+        total += bytes.byteLength;
+        bundled.set(url, bytes);
+    }
+    return { bundled, skipped };
+}
