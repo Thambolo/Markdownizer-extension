@@ -36,6 +36,10 @@ export function App() {
   const iframeOptionRef = useRef<IframeOptionState>(initialIframeOptionState());
   const previewEnabledRef = useRef(true);
   const inspectionGenerationRef = useRef(0);
+  const [imagesEligible, setImagesEligible] = useState(false);
+  const [includeImages, setIncludeImages] = useState(false);
+  const [permissionWarning, setPermissionWarning] = useState('');
+  const includeImagesRef = useRef(false);
 
   const sessionRef = useRef<PreviewSession | null>(null);
 
@@ -56,14 +60,20 @@ export function App() {
     if (previewEnabledRef.current && sessionRef.current && prev !== now) {
       sessionRef.current.setIncludeIframes(now);
     }
+    setImagesEligible(message.hasImages);
   };
 
   useEffect(() => {
-    chrome.storage.local.get(['autoDownload'], (result) => {
+    (async () => {
+      const result = await chrome.storage.local.get(['autoDownload', 'includeImages']);
       if (result.autoDownload !== undefined) {
         setAutoDownload(result.autoDownload);
       }
-    });
+      if (result.includeImages !== undefined) {
+        setIncludeImages(result.includeImages);
+        includeImagesRef.current = result.includeImages;
+      }
+    })();
   }, []);
 
   // Read preview preference and open session on mount
@@ -184,7 +194,33 @@ export function App() {
     setIframeOption(next);
     if (previewEnabledRef.current && sessionRef.current) {
       sessionRef.current.setIncludeIframes(isIframeIncluded(next));
+      inspectionGenerationRef.current = 0;
+      requestIframeInspection(sessionRef.current, captureModeRef.current);
     }
+  };
+
+  const ensureImagePermission = async (): Promise<boolean> => {
+    const origins = ['<all_urls>'];
+    if (await chrome.permissions.contains({ origins })) return true;
+    return await chrome.permissions.request({ origins });
+  };
+
+  const toggleIncludeImages = async (e: Event) => {
+    const target = e.target as HTMLInputElement;
+    const newValue = target.checked;
+    if (newValue) {
+      const granted = await ensureImagePermission();
+      if (!granted) {
+        setIncludeImages(false);
+        includeImagesRef.current = false;
+        setPermissionWarning('Image bundling needs site access permission.');
+        return;
+      }
+    }
+    setPermissionWarning('');
+    setIncludeImages(newValue);
+    includeImagesRef.current = newValue;
+    chrome.storage.local.set({ includeImages: newValue });
   };
 
   const downloadFile = (content: string, filename: string) => {
@@ -278,7 +314,7 @@ export function App() {
 
             <StatusOrb status={status} handleConvert={handleConvert} />
         
-            <StatusMessage status={status} markdownLength={markdown.length} error={error} warning={previewWarning} />
+            <StatusMessage status={status} markdownLength={markdown.length} error={error} warning={previewWarning || permissionWarning} />
 
             {/* Success Actions (Only visible on Success) */}
             {status === 'success' && (
@@ -302,6 +338,9 @@ export function App() {
           iframeEligible={iframeOption.eligible}
           includeIframes={isIframeIncluded(iframeOption)}
           toggleIncludeIframes={toggleIncludeIframes}
+          imagesEligible={imagesEligible}
+          includeImages={includeImages}
+          toggleIncludeImages={toggleIncludeImages}
         />
 
       </div>

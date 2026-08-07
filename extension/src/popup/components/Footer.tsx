@@ -10,6 +10,9 @@ export function Footer({
   iframeEligible,
   includeIframes,
   toggleIncludeIframes,
+  imagesEligible,
+  includeImages,
+  toggleIncludeImages,
 }: {
   autoDownload: boolean;
   toggleAutoDownload: (e: Event) => void;
@@ -20,6 +23,9 @@ export function Footer({
   iframeEligible: boolean;
   includeIframes: boolean;
   toggleIncludeIframes: (e: Event) => void;
+  imagesEligible: boolean;
+  includeImages: boolean;
+  toggleIncludeImages: (e: Event) => void;
 }) {
   return (
     <footer class="border-t border-slate-800 bg-slate-950 px-4 py-3">
@@ -43,6 +49,15 @@ export function Footer({
             label="Include iframes"
             checked={includeIframes}
             onChange={toggleIncludeIframes}
+          />
+        )}
+        {imagesEligible && (
+          <Toggle
+            id="include-images-toggle"
+            label="Include images"
+            description="Bundles page images with the Markdown file (ZIP)"
+            checked={includeImages}
+            onChange={toggleIncludeImages}
           />
         )}
         <Toggle

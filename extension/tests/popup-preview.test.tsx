@@ -65,6 +65,10 @@ function createChromeMock() {
             sendMessage: vi.fn(),
             query: vi.fn(async () => [{ id: 1, url: 'https://example.com', title: 'Example' }]),
         },
+        permissions: {
+            contains: vi.fn(async () => true),
+            request: vi.fn(async () => true),
+        },
         scripting: {
             executeScript: vi.fn(async () => []),
             insertCSS: vi.fn(async () => undefined),
@@ -1747,5 +1751,151 @@ describe('Task 3: popup startup progressive and race-safe', () => {
         expect(port.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({ type: 'preview:set-iframes', enabled: true })
         );
+    });
+});
+
+// ── Include Images Toggle ────────────────────────────────────────────────────
+
+describe('Include images toggle', () => {
+    let chrome: ReturnType<typeof createChromeMock>;
+    let App: typeof import('../src/popup/App').App;
+    let render: typeof import('preact').render;
+    let act: typeof import('preact/test-utils').act;
+
+    beforeEach(async () => {
+        chrome = createChromeMock();
+        vi.stubGlobal('chrome', chrome);
+        vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn(async () => {}) } });
+        if (!document.body) document.body = document.createElement('body');
+        document.body.innerHTML = '<div id="app"></div>';
+        vi.resetModules();
+        const preact = await import('preact');
+        const testUtils = await import('preact/test-utils');
+        render = preact.render;
+        act = testUtils.act;
+        const appMod = await import('../src/popup/App');
+        App = appMod.App;
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        vi.restoreAllMocks();
+    });
+
+    async function renderApp() {
+        await act(async () => {
+            render(<App />, document.getElementById('app')!);
+        });
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+    }
+
+    function emitEligibility(hasImages: boolean) {
+        const port = lastPort!;
+        const inspect = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((m) => m.type === 'preview:inspect');
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: inspect!.sessionId,
+            captureMode: 'smart',
+            generation: inspect!.generation,
+            hasEligibleIframes: false,
+            hasImages,
+        });
+    }
+
+    it('is hidden until eligibility reports images', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+        expect(document.querySelector('#include-images-toggle')).toBeNull();
+        emitEligibility(true);
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(document.querySelector('#include-images-toggle')).not.toBeNull();
+    });
+
+    it('persists the choice to storage', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+        emitEligibility(true);
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        const toggle = document.querySelector('#include-images-toggle') as HTMLInputElement;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(toggle, true);
+            toggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(chrome.storage.local.set).toHaveBeenCalledWith(expect.objectContaining({ includeImages: true }));
+    });
+
+    it('restores a persisted true value on mount', async () => {
+        chrome.storage.local.get.mockImplementation(async (keys: string | string[]) => {
+            const keyList = Array.isArray(keys) ? keys : [keys];
+            if (keyList.includes('includeImages')) return { includeImages: true };
+            return {};
+        });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+        emitEligibility(true);
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        const toggle = document.querySelector('#include-images-toggle') as HTMLInputElement;
+        expect(toggle.checked).toBe(true);
+    });
+
+    it('reverts the toggle and warns when permission is denied', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        chrome.permissions.contains.mockResolvedValue(false);
+        chrome.permissions.request.mockResolvedValue(false);
+        await renderApp();
+        emitEligibility(true);
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        const toggle = document.querySelector('#include-images-toggle') as HTMLInputElement;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(toggle, true);
+            toggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(toggle.checked).toBe(false);
+        expect(chrome.permissions.request).toHaveBeenCalledWith({ origins: ['<all_urls>'] });
+        expect(document.body.textContent).toContain('site access permission');
+        expect(chrome.storage.local.set).not.toHaveBeenCalledWith(expect.objectContaining({ includeImages: true }));
+    });
+
+    it('re-inspects when include iframes is toggled', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+        // Emit eligibility with hasEligibleIframes: true so the iframe toggle renders
+        const port = lastPort!;
+        const inspect = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((m) => m.type === 'preview:inspect');
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: inspect!.sessionId,
+            captureMode: 'smart',
+            generation: inspect!.generation,
+            hasEligibleIframes: true,
+            hasImages: true,
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        const iframeToggle = document.querySelector('#include-iframes-toggle') as HTMLInputElement;
+        expect(iframeToggle).not.toBeNull();
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(iframeToggle, false);
+            iframeToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        const inspects = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string })
+            .filter((m) => m.type === 'preview:inspect');
+        expect(inspects.length).toBeGreaterThanOrEqual(2);
     });
 });
