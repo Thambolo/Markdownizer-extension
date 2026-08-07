@@ -5,6 +5,9 @@ import {
     rewriteImageReferences,
     fetchImageBytes,
     downloadAllImages,
+    buildReadme,
+    buildZipArchive,
+    buildZipBlob,
 } from '../src/popup/zip-download';
 
 describe('collectImageNodes', () => {
@@ -143,5 +146,85 @@ describe('downloadAllImages', () => {
         );
         expect(bundled.size).toBe(1);
         expect(skipped).toEqual(['https://e.com/b.png', 'https://e.com/c.png']);
+    });
+});
+
+import { unzipSync, strFromU8 } from 'fflate';
+
+describe('buildReadme', () => {
+    it('documents the primary file, relative paths, and file listing', () => {
+        const readme = buildReadme({
+            title: 'react_docs',
+            sourceUrl: 'https://react.dev/learn',
+            markdownFilename: 'react_docs.md',
+            images: [
+                { localPath: 'images/img-001.png', bytes: new Uint8Array([1]) },
+                { localPath: 'images/img-002.jpg', bytes: new Uint8Array([2]) },
+            ],
+        });
+        expect(readme).toContain('react_docs.md');
+        expect(readme).toContain('images/img-001.png');
+        expect(readme).toContain('images/img-002.jpg');
+        expect(readme).toContain('https://react.dev/learn');
+    });
+});
+
+describe('buildZipArchive', () => {
+    it('creates a zip with README, markdown (deflated), and stored images', () => {
+        const markdown = '# Hello'.repeat(50);
+        const zip = buildZipArchive({
+            readme: 'README',
+            markdown,
+            markdownFilename: 'page.md',
+            images: [{ localPath: 'images/img-001.png', bytes: new Uint8Array([1, 2, 3]) }],
+        });
+        const files = unzipSync(zip);
+        expect(Object.keys(files).sort()).toEqual(['README.md', 'images/img-001.png', 'page.md']);
+        expect(strFromU8(files['README.md'])).toBe('README');
+        expect(strFromU8(files['page.md'])).toBe(markdown);
+        expect(Array.from(files['images/img-001.png'])).toEqual([1, 2, 3]);
+        // Stored image: exact byte length in the archive entry
+        expect(files['images/img-001.png'].byteLength).toBe(3);
+    });
+});
+
+describe('buildZipBlob', () => {
+    const originalFetch = globalThis.fetch;
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        vi.restoreAllMocks();
+    });
+
+    it('returns null when the markdown has no images', async () => {
+        const result = await buildZipBlob('# No images here', 'page', null);
+        expect(result.blob).toBeNull();
+        expect(result.totalImages).toBe(0);
+    });
+
+    it('returns null when no images could be fetched', async () => {
+        globalThis.fetch = vi.fn(async () => { throw new Error('down'); }) as unknown as typeof fetch;
+        const result = await buildZipBlob('![a](https://e.com/a.png)', 'page', null);
+        expect(result.blob).toBeNull();
+        expect(result.bundledImages).toBe(0);
+        expect(result.skippedImages).toBe(1);
+    });
+
+    it('builds a zip with rewritten markdown', async () => {
+        globalThis.fetch = vi.fn(async () => new Response(new Uint8Array([4, 5]))) as unknown as typeof fetch;
+        const result = await buildZipBlob(
+            'Intro\n\n![Hero](https://e.com/hero.png)\n\n![Hero](https://e.com/hero.png)\n',
+            'page',
+            'https://e.com',
+        );
+        expect(result.blob).not.toBeNull();
+        expect(result.totalImages).toBe(1);
+        expect(result.bundledImages).toBe(1);
+        expect(result.skippedImages).toBe(0);
+        const zip = unzipSync(new Uint8Array(await result.blob!.arrayBuffer()));
+        const md = strFromU8(zip['page.md']);
+        expect(md).toContain('![Hero](images/img-001.png)');
+        // Deduped: single fetch of hero.png
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+        expect(Object.keys(zip).some((k) => k.startsWith('images/'))).toBe(true);
     });
 });

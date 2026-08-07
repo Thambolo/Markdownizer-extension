@@ -202,3 +202,108 @@ export async function downloadAllImages(
     }
     return { bundled, skipped };
 }
+
+import { zipSync, strToU8 } from 'fflate';
+
+export interface BundledImage {
+    localPath: string;
+    bytes: Uint8Array;
+}
+
+/** Build the README that orients an LLM or human opening the archive. */
+export function buildReadme(options: {
+    title: string;
+    sourceUrl: string | null;
+    markdownFilename: string;
+    images: BundledImage[];
+}): string {
+    const { title, sourceUrl, markdownFilename, images } = options;
+    const lines: string[] = [
+        `# ${title}`,
+        '',
+        'The primary document is `' + markdownFilename + '`.',
+        'Images referenced from the document are stored under `images/`.',
+        'Paths in the Markdown are relative to the archive root.',
+        '',
+        '## Files',
+        '',
+        `- ${markdownFilename} - extracted webpage content`,
+    ];
+    if (sourceUrl) lines.push(`- source: ${sourceUrl}`);
+    for (const image of images) {
+        lines.push(`- ${image.localPath} - image from the page`);
+    }
+    return lines.join('\n') + '\n';
+}
+
+/**
+ * Build the ZIP archive: README.md and the Markdown file are DEFLATED
+ * (level 6); images are STORED (already-compressed formats gain nothing
+ * from deflate, and store is CPU-cheap). Standard zip, UTF-8, forward
+ * slashes, ASCII names, no ZIP64 (caps keep the archive well under 4 GB).
+ */
+export function buildZipArchive(entries: {
+    readme: string;
+    markdown: string;
+    markdownFilename: string;
+    images: BundledImage[];
+}): Uint8Array {
+    const files: Record<string, [Uint8Array, { level: number } | { store: boolean }]> = {
+        'README.md': [strToU8(entries.readme), { level: 6 }],
+        [entries.markdownFilename]: [strToU8(entries.markdown), { level: 6 }],
+    };
+    for (const image of entries.images) {
+        files[image.localPath] = [image.bytes, { store: true }];
+    }
+    return zipSync(files);
+}
+
+export interface ZipBuildResult {
+    blob: Blob | null;
+    totalImages: number;
+    bundledImages: number;
+    skippedImages: number;
+}
+
+/**
+ * Orchestrate the bundle: collect image URLs from the markdown, fetch them,
+ * rewrite references, build the archive. Returns blob: null when there is
+ * nothing to bundle (no images, or none fetchable) - callers fall back to a
+ * plain .md download.
+ */
+export async function buildZipBlob(
+    markdown: string,
+    title: string,
+    sourceUrl: string | null,
+): Promise<ZipBuildResult> {
+    const nodes = collectImageNodes(markdown);
+    const urls = nodes.map((node) => node.url);
+    const uniqueUrls = Array.from(new Set(urls));
+
+    const { bundled, skipped } = await downloadAllImages(uniqueUrls);
+    if (bundled.size === 0) {
+        return {
+            blob: null,
+            totalImages: uniqueUrls.length,
+            bundledImages: 0,
+            skippedImages: skipped.length,
+        };
+    }
+
+    const mapping = assignLocalPaths(uniqueUrls);
+    const rewritten = rewriteImageReferences(markdown, mapping);
+    const markdownFilename = `${title}.md`;
+    const images: BundledImage[] = Array.from(bundled.entries()).map(([url, bytes]) => ({
+        localPath: mapping.get(url)!,
+        bytes,
+    }));
+    const readme = buildReadme({ title, sourceUrl, markdownFilename, images });
+    const zipBytes = buildZipArchive({ readme, markdown: rewritten, markdownFilename, images });
+
+    return {
+        blob: new Blob([zipBytes], { type: 'application/zip' }),
+        totalImages: uniqueUrls.length,
+        bundledImages: images.length,
+        skippedImages: skipped.length,
+    };
+}
