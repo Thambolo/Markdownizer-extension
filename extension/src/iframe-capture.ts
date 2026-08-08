@@ -238,19 +238,37 @@ export function hasEligibleIframesLightweight(sourceRoot: HTMLElement): boolean 
 }
 
 /**
- * Lightweight image eligibility check: true when the root contains at least
- * one `<img>` that could be bundled — non-empty src, not a blob: URL (page-
- * scoped, unfetchable from the popup), and not a confirmed 1x1 tracking
- * pixel. Not-yet-loaded images (naturalWidth 0) count as eligible; the
- * bundle step filters failures anyway. No clones, no serialization.
+ * Lightweight image eligibility check: true when the current capture includes
+ * at least one `<img>` that could be bundled — non-empty src, not a blob: URL
+ * (page-scoped, unfetchable from the popup), and not a confirmed 1x1 tracking
+ * pixel. Images inside readable same-origin iframes count too, mirroring the
+ * iframe capture and the recursion in `hasEligibleIframesLightweight`; nested
+ * frame reads are bounded by the shared iframe budget (count and depth).
+ * Not-yet-loaded images (naturalWidth 0) count as eligible; the bundle step
+ * filters failures anyway. No clones, no serialization.
  */
 export function hasImagesInRoot(sourceRoot: HTMLElement): boolean {
-    for (const img of sourceRoot.querySelectorAll<HTMLImageElement>('img')) {
+    return hasImagesInSubtree(sourceRoot, createIframeBudget(), 0);
+}
+
+function hasImagesInSubtree(root: HTMLElement, budget: IframeBudget, frameDepth: number): boolean {
+    for (const img of root.querySelectorAll<HTMLImageElement>('img')) {
         const src = img.getAttribute('src');
         if (!src || src.startsWith('blob:')) continue;
         const loaded = img.complete && img.naturalWidth > 0 && img.naturalHeight > 0;
         if (loaded && img.naturalWidth <= 1 && img.naturalHeight <= 1) continue;
         return true;
+    }
+
+    if (frameDepth >= budget.maxDepth) return false;
+
+    const sourceFrames = Array.from(root.querySelectorAll<HTMLIFrameElement>('iframe'));
+    for (const sourceFrame of sourceFrames) {
+        if (budget.count >= budget.maxCount) break;
+        const frameDocument = readSameOriginFrame(sourceFrame);
+        if (!frameDocument?.body) continue;
+        budget.count += 1;
+        if (hasImagesInSubtree(frameDocument.body, budget, frameDepth + 1)) return true;
     }
     return false;
 }

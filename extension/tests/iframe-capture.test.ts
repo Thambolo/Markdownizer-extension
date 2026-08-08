@@ -522,4 +522,94 @@ describe('hasImagesInRoot', () => {
         root.innerHTML = '<img src="blob:x"><img src="https://example.com/b.png">';
         expect(hasImagesInRoot(root)).toBe(true);
     });
+
+    // ── Same-origin iframe content ─────────────────────────────────────────
+
+    /** Create a root with an iframe whose contentDocument is a parsed doc. */
+    function createRootWithFrame(html: string, frameBodyHtml: string): { root: HTMLElement; iframe: HTMLIFrameElement } {
+        const root = document.createElement('div');
+        root.innerHTML = html;
+        const iframe = root.querySelector('iframe') as HTMLIFrameElement;
+        const frameDoc = new DOMParser().parseFromString(
+            `<html><body>${frameBodyHtml}</body></html>`,
+            'text/html',
+        );
+        Object.defineProperty(iframe, 'contentDocument', {
+            configurable: true,
+            get: () => frameDoc,
+        });
+        return { root, iframe };
+    }
+
+    it('returns true for an image inside a same-origin iframe', () => {
+        const { root } = createRootWithFrame(
+            '<iframe></iframe>',
+            '<img src="https://example.com/frame.png">',
+        );
+        expect(hasImagesInRoot(root)).toBe(true);
+    });
+
+    it('returns false when the image is only in an unreadable (cross-origin) iframe', () => {
+        const root = document.createElement('div');
+        root.innerHTML = '<iframe src="https://other.example.com"></iframe>';
+        const iframe = root.querySelector('iframe') as HTMLIFrameElement;
+        // Cross-origin frames expose no contentDocument
+        Object.defineProperty(iframe, 'contentDocument', {
+            configurable: true,
+            get: () => null,
+        });
+        expect(hasImagesInRoot(root)).toBe(false);
+    });
+
+    it('returns false for blob-only images inside a same-origin frame', () => {
+        const { root } = createRootWithFrame(
+            '<iframe></iframe>',
+            '<img src="blob:https://example.com/uuid">',
+        );
+        expect(hasImagesInRoot(root)).toBe(false);
+    });
+
+    it('returns true when the root and a frame both contribute images', () => {
+        const { root } = createRootWithFrame(
+            '<img src="https://example.com/root.png"><iframe></iframe>',
+            '<img src="https://example.com/frame.png">',
+        );
+        expect(hasImagesInRoot(root)).toBe(true);
+    });
+
+    it('returns true for an image in a nested same-origin frame', () => {
+        const { root, iframe } = createRootWithFrame('<iframe></iframe>', '<iframe></iframe>');
+        const nestedFrame = iframe.contentDocument!.querySelector('iframe') as HTMLIFrameElement;
+        const nestedDoc = new DOMParser().parseFromString(
+            '<html><body><img src="https://example.com/deep.png"></body></html>',
+            'text/html',
+        );
+        Object.defineProperty(nestedFrame, 'contentDocument', {
+            configurable: true,
+            get: () => nestedDoc,
+        });
+        expect(hasImagesInRoot(root)).toBe(true);
+    });
+
+    it('respects the iframe count budget across frames', () => {
+        // 21 readable frames, each containing an image: only the first 20 are
+        // inspected, so the 21st's image must not flip the result.
+        const root = document.createElement('div');
+        for (let i = 0; i < IFRAME_MAX_COUNT + 1; i += 1) {
+            const frame = document.createElement('iframe');
+            const frameDoc = new DOMParser().parseFromString(
+                i === IFRAME_MAX_COUNT
+                    ? '<html><body><img src="https://example.com/budgeted.png"></body></html>'
+                    : '<html><body></body></html>',
+                'text/html',
+            );
+            Object.defineProperty(frame, 'contentDocument', {
+                configurable: true,
+                get: () => frameDoc,
+            });
+            root.appendChild(frame);
+        }
+        // The only image lives in the 21st frame — beyond the budget.
+        expect(hasImagesInRoot(root)).toBe(false);
+    });
 });
