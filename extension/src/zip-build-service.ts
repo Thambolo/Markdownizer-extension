@@ -54,7 +54,7 @@ export async function buildAndDownloadZip(
 }
 
 /**
- * Encode bytes as a base64 data: URL. Chunked (8 KB) to avoid call-stack
+ * Encode bytes as a base64 data: URL. Chunked (32 KB) to avoid call-stack
  * limits on large payloads. `btoa` is available in service workers.
  * NOTE: URL.createObjectURL is NOT available in service workers, so data:
  * URLs are the download mechanism there.

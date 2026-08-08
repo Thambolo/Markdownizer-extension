@@ -130,11 +130,12 @@ async function convertSkeleton(payload: ConvertSkeletonRequest["payload"]): Prom
 
 async function handleBuildZip(request: BuildZipRequest, sendResponse: (response: unknown) => void): Promise<void> {
     const { buildId, payload } = request;
+    const startedAt = Date.now();
     const broadcast = (message: Record<string, unknown>): void => {
         chrome.runtime.sendMessage(message).catch(() => {});
     };
     const writeState = (state: Record<string, unknown>): void => {
-        chrome.storage.session.set({ activeZipBuild: { buildId, startedAt: Date.now(), ...state } }).catch(() => {});
+        chrome.storage.session.set({ activeZipBuild: { buildId, startedAt, ...state } }).catch(() => {});
     };
     const clearState = (): void => {
         chrome.storage.session.remove('activeZipBuild').catch(() => {});
@@ -173,7 +174,9 @@ async function handleBuildZip(request: BuildZipRequest, sendResponse: (response:
         sendResponse({ success: true, ...result });
     } catch (err) {
         await clearState();
-        const message = err instanceof Error ? err.message : 'Could not build the download.';
+        // Friendly user-facing message; the raw error goes to the console.
+        console.error('Markdownizer zip build failed:', err);
+        const message = 'The download failed. Try again.';
         broadcast({ type: 'zip:error', buildId, error: message });
         sendResponse({ success: false, error: message });
     }
