@@ -1,17 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { PREVIEW_PORT_NAME, type CaptureMode, type PreviewEligibilityMessage } from '../src/preview-protocol';
-import { unzipSync, strFromU8 } from 'fflate';
-
-/** jsdom Blobs lack arrayBuffer(); read the bytes via FileReader instead. */
-function readBlobBytes(blob: Blob): Promise<Uint8Array> {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
-        reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'));
-        reader.readAsArrayBuffer(blob);
-    });
-}
 
 // ── Chrome API Mocks ──────────────────────────────────────────────────────────
 
@@ -65,6 +54,7 @@ function createChromeMock() {
 
     // Storage mock with get/set
     const storageData: Record<string, unknown> = {};
+    const sessionData: Record<string, unknown> = {};
 
     return {
         tabs: {
@@ -90,9 +80,13 @@ function createChromeMock() {
                     { js: ['content.js'], css: ['content.css'] },
                 ],
             })),
-            sendMessage: vi.fn(),
+            sendMessage: vi.fn(async () => ({ success: true })),
             openOptionsPage: vi.fn(),
             getURL: vi.fn((path: string) => `chrome-extension://abc123/${path}`),
+            onMessage: {
+                addListener: vi.fn(),
+                removeListener: vi.fn(),
+            },
         },
         storage: {
             local: {
@@ -110,8 +104,22 @@ function createChromeMock() {
                     Object.assign(storageData, items);
                 }),
             },
+            session: {
+                get: vi.fn(async (keys: string | string[]) => {
+                    const key = Array.isArray(keys) ? keys[0] : keys;
+                    return key in sessionData ? { [key]: sessionData[key] } : {};
+                }),
+                set: vi.fn(async (items: Record<string, unknown>) => {
+                    Object.assign(sessionData, items);
+                }),
+                remove: vi.fn(async (keys: string | string[]) => {
+                    const list = Array.isArray(keys) ? keys : [keys];
+                    for (const key of list) delete sessionData[key];
+                }),
+            },
         },
         _storageData: storageData,
+        _sessionData: sessionData,
     };
 }
 
@@ -2114,6 +2122,11 @@ describe('Zip download flow', () => {
         });
     }
 
+    function emitMessage(msg: unknown) {
+        const listener = chrome.runtime.onMessage.addListener.mock.calls[0][0] as (m: unknown) => void;
+        listener(msg);
+    }
+
     it('downloads a plain .md when the toggle is off (single button)', async () => {
         chrome.storage.local.get.mockResolvedValue({ includeImages: false });
         chrome.tabs.sendMessage.mockResolvedValue({ success: true, markdown: '# Hello' });
@@ -2185,49 +2198,20 @@ describe('Zip download flow', () => {
         await act(async () => { zipButton.click(); });
         await act(async () => { await new Promise(r => setTimeout(r, 100)); });
 
-        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-        expect(createObjectURL).toHaveBeenCalled();
-    });
-
-    it('manual zip download includes the source page URL in the README', async () => {
-        chrome.storage.local.get.mockResolvedValue({ includeImages: true });
-        chrome.tabs.sendMessage.mockResolvedValue({
-            success: true,
-            markdown: '![Hero](https://e.com/hero.png)',
-        });
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))));
-        let capturedBlob: Blob | null = null;
-        const createObjectURL = vi.fn((blob: Blob) => { capturedBlob = blob; return 'blob:mock'; });
-        const revokeObjectURL = vi.fn();
-        vi.stubGlobal('URL', new Proxy(URL, {
-            get: (target, prop, receiver) => {
-                if (prop === 'createObjectURL') return createObjectURL;
-                if (prop === 'revokeObjectURL') return revokeObjectURL;
-                return Reflect.get(target, prop, receiver);
-            },
-        }));
-
-        await renderApp();
-        emitEligibility();
-        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
-
-        const startButton = document.querySelector('button') as HTMLButtonElement;
-        await act(async () => { startButton.click(); });
-        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
-
-        const buttons = Array.from(document.querySelectorAll('button'));
-        const zipButton = buttons.find((b) => b.textContent?.includes('.md + images')) as HTMLButtonElement;
-        expect(zipButton).not.toBeUndefined();
-        await act(async () => { zipButton.click(); });
-        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
-
-        // The blob handed to createObjectURL is the zip archive; its README must
-        // carry the source page URL (the converted tab is https://example.com).
-        expect(capturedBlob).not.toBeNull();
-        // jsdom Blobs lack arrayBuffer(); read the zip bytes via FileReader.
-        const zip = unzipSync(await readBlobBytes(capturedBlob!));
-        const readme = strFromU8(zip['README.md']);
-        expect(readme).toContain('https://example.com');
+        // The popup no longer fetches or builds the zip itself: it delegates to
+        // the service worker via build_zip, so no fetch and no createObjectURL.
+        expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: 'build_zip',
+                buildId: expect.any(String),
+                payload: expect.objectContaining({
+                    markdown: '![Hero](https://e.com/hero.png)',
+                    title: 'example',
+                }),
+            }),
+        );
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+        expect(createObjectURL).not.toHaveBeenCalled();
     });
 
     it('left half clears the image note after a zip download', async () => {
@@ -2260,13 +2244,34 @@ describe('Zip download flow', () => {
         await act(async () => { zipButton.click(); });
         await act(async () => { await new Promise(r => setTimeout(r, 100)); });
 
+        // The image note arrives only via the zip:done broadcast from the
+        // service worker (the popup no longer builds the zip itself).
+        const buildId = (chrome.runtime.sendMessage.mock.calls[0][0] as { buildId: string }).buildId;
+        emitMessage({
+            type: 'zip:done',
+            buildId,
+            downloaded: 'zip',
+            totalImages: 1,
+            bundledImages: 1,
+            skippedImages: 0,
+            filename: 'Example.zip',
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
         // Zip download leaves the image note displayed
         expect(document.body.textContent).toContain('Included 1 images');
 
-        // The left half (.md) download must clear the stale note
-        const mdButton = buttons.find(
-            (b) => b.textContent?.includes('.md') && !b.textContent?.includes('images'),
-        ) as HTMLButtonElement;
+        // The zip:done handler flashes a "Downloaded!" button for 2 seconds
+        // (setDownloaded(true)), which detaches the split-button subtree — and
+        // Preact removes the listeners of the detached node, so a stale
+        // reference click never reaches handleDownload. Wait out the flash so
+        // the re-mounted split button is live again.
+        await act(async () => { await new Promise(r => setTimeout(r, 2050)); });
+
+        // Re-query the CURRENT .md button (the left half renders a DownloadIcon
+        // + ".md"; the SVG contributes no text, so textContent is exactly ".md").
+        const freshButtons = Array.from(document.querySelectorAll('button'));
+        const mdButton = freshButtons.find((b) => b.textContent?.trim() === '.md') as HTMLButtonElement;
         expect(mdButton).not.toBeUndefined();
         await act(async () => { mdButton.click(); });
         await act(async () => { await new Promise(r => setTimeout(r, 20)); });
@@ -2299,7 +2304,203 @@ describe('Zip download flow', () => {
         await act(async () => { startButton.click(); });
         await act(async () => { await new Promise(r => setTimeout(r, 200)); });
 
-        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-        expect(createObjectURL).toHaveBeenCalled();
+        // Auto-download with images routes through the service worker's
+        // build_zip; the popup no longer fetches or creates blob URLs.
+        expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ action: 'build_zip' }),
+        );
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+        expect(createObjectURL).not.toHaveBeenCalled();
+    });
+});
+
+// ── Zip Build Progress Flow ──────────────────────────────────────────────────
+
+describe('Zip build progress flow', () => {
+    let chrome: ReturnType<typeof createChromeMock>;
+    let App: typeof import('../src/popup/App').App;
+    let render: typeof import('preact').render;
+    let act: typeof import('preact/test-utils').act;
+
+    beforeEach(async () => {
+        chrome = createChromeMock();
+        vi.stubGlobal('chrome', chrome);
+        vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn(async () => {}) } });
+        if (!document.body) document.body = document.createElement('body');
+        document.body.innerHTML = '<div id="app"></div>';
+        vi.resetModules();
+        const preact = await import('preact');
+        const testUtils = await import('preact/test-utils');
+        render = preact.render;
+        act = testUtils.act;
+        const appMod = await import('../src/popup/App');
+        App = appMod.App;
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        vi.restoreAllMocks();
+    });
+
+    async function renderApp() {
+        await act(async () => {
+            render(<App />, document.getElementById('app')!);
+        });
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+    }
+
+    function emitEligibility() {
+        const port = lastPort!;
+        const inspect = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((m) => m.type === 'preview:inspect');
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: inspect!.sessionId,
+            captureMode: 'smart',
+            generation: inspect!.generation,
+            hasEligibleIframes: false,
+            hasImages: true,
+        });
+    }
+
+    function emitMessage(msg: unknown) {
+        const listener = chrome.runtime.onMessage.addListener.mock.calls[0][0] as (m: unknown) => void;
+        listener(msg);
+    }
+
+    async function convertWithImages() {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true });
+        chrome.tabs.sendMessage.mockResolvedValue({
+            success: true,
+            markdown: '![Hero](https://e.com/hero.png)',
+        });
+        await renderApp();
+        emitEligibility();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+    }
+
+    it('sends build_zip and shows the bundling button state on click', async () => {
+        await convertWithImages();
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const zipButton = buttons.find((b) => b.textContent?.includes('.md + images')) as HTMLButtonElement;
+        await act(async () => { zipButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: 'build_zip',
+                buildId: expect.any(String),
+                payload: expect.objectContaining({
+                    markdown: '![Hero](https://e.com/hero.png)',
+                    title: 'example',
+                }),
+            }),
+        );
+        // Right half now shows "Bundling…"
+        expect(document.body.textContent).toContain('Bundling');
+    });
+
+    it('updates the progress strip from zip:progress messages and clears on zip:done', async () => {
+        await convertWithImages();
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const zipButton = buttons.find((b) => b.textContent?.includes('.md + images')) as HTMLButtonElement;
+        await act(async () => { zipButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const buildId = (chrome.runtime.sendMessage.mock.calls[0][0] as { buildId: string }).buildId;
+        emitMessage({ type: 'zip:progress', buildId, phase: 'fetch', fetched: 1, total: 2 });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(document.body.textContent).toContain('Fetching images 1/2');
+        expect(document.querySelector('[role="status"]')).not.toBeNull();
+
+        emitMessage({ type: 'zip:progress', buildId, phase: 'build' });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(document.body.textContent).toContain('Building ZIP');
+
+        emitMessage({ type: 'zip:done', buildId, downloaded: 'zip', totalImages: 2, bundledImages: 2, skippedImages: 0, filename: 'Example.zip' });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(document.querySelector('[role="status"]')).toBeNull();
+        expect(document.body.textContent).toContain('Included 2 images');
+    });
+
+    it('ignores messages with a stale buildId', async () => {
+        await convertWithImages();
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const zipButton = buttons.find((b) => b.textContent?.includes('.md + images')) as HTMLButtonElement;
+        await act(async () => { zipButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        emitMessage({ type: 'zip:progress', buildId: 'stale-build', phase: 'fetch', fetched: 9, total: 9 });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(document.querySelector('[role="status"]')).not.toBeNull();
+        expect(document.body.textContent).not.toContain('9/9');
+    });
+
+    it('shows zip:error as a note and clears the strip', async () => {
+        await convertWithImages();
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const zipButton = buttons.find((b) => b.textContent?.includes('.md + images')) as HTMLButtonElement;
+        await act(async () => { zipButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const buildId = (chrome.runtime.sendMessage.mock.calls[0][0] as { buildId: string }).buildId;
+        emitMessage({ type: 'zip:error', buildId, error: 'Could not build the download.' });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(document.querySelector('[role="status"]')).toBeNull();
+        expect(document.body.textContent).toContain('Could not build the download.');
+    });
+
+    it('restores progress on reopen from storage.session and refreshes via zip:status', async () => {
+        chrome._sessionData.activeZipBuild = { buildId: 'b-reopen', phase: 'fetch', fetched: 4, total: 10, startedAt: 1 };
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        chrome.runtime.sendMessage.mockResolvedValue({ active: true, buildId: 'b-reopen', phase: 'fetch', fetched: 5, total: 10 });
+
+        await renderApp();
+        await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+
+        // Strip visible from the stored snapshot, then refreshed by the status ping
+        expect(document.querySelector('[role="status"]')).not.toBeNull();
+        expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ action: 'zip:status', buildId: 'b-reopen' }),
+        );
+        expect(document.body.textContent).toContain('Fetching images 5/10');
+    });
+
+    it('hides the strip when zip:status reports the build is gone', async () => {
+        chrome._sessionData.activeZipBuild = { buildId: 'b-dead', phase: 'fetch', fetched: 1, total: 2, startedAt: 1 };
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        chrome.runtime.sendMessage.mockResolvedValue({ active: false });
+
+        await renderApp();
+        await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+
+        expect(document.querySelector('[role="status"]')).toBeNull();
+    });
+
+    it('auto-download routes through build_zip when both toggles are on', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true, autoDownload: true });
+        chrome.tabs.sendMessage.mockResolvedValue({
+            success: true,
+            markdown: '![Hero](https://e.com/hero.png)',
+        });
+        await renderApp();
+        emitEligibility();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ action: 'build_zip' }),
+        );
     });
 });

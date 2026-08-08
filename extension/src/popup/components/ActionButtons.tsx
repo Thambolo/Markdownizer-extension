@@ -2,6 +2,7 @@ interface ActionButtonsProps {
   copied: boolean;
   downloaded: boolean;
   includeImages: boolean;
+  bundling: boolean;
   handleCopy: () => void;
   handleDownload: () => void;
   handleDownloadZip: () => void;
@@ -15,7 +16,7 @@ function DownloadIcon({ className = 'w-4 h-4' }: { className?: string }) {
   );
 }
 
-export function ActionButtons({ copied, downloaded, includeImages, handleCopy, handleDownload, handleDownloadZip }: ActionButtonsProps) {
+export function ActionButtons({ copied, downloaded, includeImages, bundling, handleCopy, handleDownload, handleDownloadZip }: ActionButtonsProps) {
   return (
     <div class="flex flex-col gap-3 w-full animate-in slide-in-from-bottom-4 duration-500">
       <button
@@ -49,7 +50,10 @@ export function ActionButtons({ copied, downloaded, includeImages, handleCopy, h
         <div class="flex w-full rounded-xl border border-slate-500 bg-slate-800 overflow-hidden">
           <button
             onClick={handleDownload}
-            class="flex-1 py-3 font-medium transition-all flex items-center justify-center gap-2 text-slate-300 hover:bg-slate-700 hover:text-white"
+            disabled={bundling}
+            class={`flex-1 py-3 font-medium transition-all flex items-center justify-center gap-2 text-slate-300 hover:bg-slate-700 hover:text-white ${
+              bundling ? 'opacity-50 pointer-events-none' : ''
+            }`}
           >
             <DownloadIcon />
             <span>.md</span>
@@ -57,10 +61,25 @@ export function ActionButtons({ copied, downloaded, includeImages, handleCopy, h
           <div class="w-px bg-slate-600" aria-hidden="true" />
           <button
             onClick={handleDownloadZip}
-            class="flex-1 py-3 font-medium transition-all flex items-center justify-center gap-2 text-indigo-200 hover:bg-indigo-600/20 hover:text-white"
+            disabled={bundling}
+            class={`flex-1 py-3 font-medium transition-all flex items-center justify-center gap-2 text-indigo-200 hover:bg-indigo-600/20 hover:text-white ${
+              bundling ? 'opacity-50 pointer-events-none' : ''
+            }`}
           >
-            <DownloadIcon />
-            <span>.md + images</span>
+            {bundling ? (
+              <>
+                <span
+                  class="inline-block w-4 h-4 border-2 border-indigo-300 border-t-transparent rounded-full animate-spin"
+                  aria-hidden="true"
+                />
+                <span>Bundling…</span>
+              </>
+            ) : (
+              <>
+                <DownloadIcon />
+                <span>.md + images</span>
+              </>
+            )}
           </button>
         </div>
       ) : (
