@@ -5,6 +5,7 @@ import { StatusOrb } from './components/StatusOrb';
 import { StatusMessage } from './components/StatusMessage';
 import { ActionButtons } from './components/ActionButtons';
 import { injectContentScript, openPreviewSession, type PreviewSession, isSupportedPageUrl } from './preview-session';
+import { buildZipBlob } from './zip-download';
 import type { CaptureMode, PreviewEligibilityMessage } from '../preview-protocol';
 import {
   applyIframeEligibility,
@@ -39,6 +40,7 @@ export function App() {
   const [imagesEligible, setImagesEligible] = useState(false);
   const [includeImages, setIncludeImages] = useState(false);
   const [permissionWarning, setPermissionWarning] = useState('');
+  const [imagesNote, setImagesNote] = useState('');
   const includeImagesRef = useRef(false);
 
   const sessionRef = useRef<PreviewSession | null>(null);
@@ -238,11 +240,46 @@ export function App() {
     setTimeout(() => setDownloaded(false), 2000);
   };
 
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename.endsWith('.zip') ? filename : `${filename}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setDownloaded(true);
+    setTimeout(() => setDownloaded(false), 2000);
+  };
+
+  const downloadWithImages = async (markdownText: string, safeTitle: string, tabUrl?: string) => {
+    try {
+        const result = await buildZipBlob(markdownText, safeTitle, tabUrl ?? null);
+        if (!result.blob) {
+            downloadFile(markdownText, safeTitle);
+            setImagesNote(result.totalImages > 0 ? 'Images unavailable - downloaded .md only' : '');
+            return;
+        }
+        downloadBlob(result.blob, safeTitle);
+        setImagesNote(
+            result.skippedImages > 0
+                ? `Included ${result.bundledImages} of ${result.totalImages} images`
+                : `Included ${result.bundledImages} images`,
+        );
+    } catch (err) {
+        console.error(err);
+        downloadFile(markdownText, safeTitle);
+        setImagesNote('Image bundling failed - downloaded .md only');
+    }
+  };
+
   const handleConvert = async () => {
     if (status === 'loading') return;
     setStatus('loading');
     setError('');
     setMarkdown('');
+    setImagesNote('');
 
     // Set preview to loading state before conversion
     if (previewEnabled && sessionRef.current) {
@@ -283,7 +320,11 @@ export function App() {
         setStatus('success');
 
         if (autoDownload) {
-          downloadFile(response.markdown, safeTitle);
+            if (includeImagesRef.current) {
+                downloadWithImages(response.markdown, safeTitle, tab.url);
+            } else {
+                downloadFile(response.markdown, safeTitle);
+            }
         }
       } else {
         throw new Error(response.error || "Unknown error occurred");
@@ -314,15 +355,17 @@ export function App() {
 
             <StatusOrb status={status} handleConvert={handleConvert} />
         
-            <StatusMessage status={status} markdownLength={markdown.length} error={error} warning={previewWarning || permissionWarning} />
+            <StatusMessage status={status} markdownLength={markdown.length} error={error} warning={previewWarning || permissionWarning} note={imagesNote} />
 
             {/* Success Actions (Only visible on Success) */}
             {status === 'success' && (
                 <ActionButtons 
                     copied={copied} 
                     downloaded={downloaded}
+                    includeImages={includeImagesRef.current}
                     handleCopy={handleCopy} 
                     handleDownload={() => downloadFile(markdown, filename)} 
+                    handleDownloadZip={() => downloadWithImages(markdown, filename)} 
                 />
             )}
 

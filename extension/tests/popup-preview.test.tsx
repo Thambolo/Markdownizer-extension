@@ -1899,3 +1899,160 @@ describe('Include images toggle', () => {
         expect(inspects.length).toBeGreaterThanOrEqual(2);
     });
 });
+
+// ── Zip Download Flow ────────────────────────────────────────────────────────
+
+describe('Zip download flow', () => {
+    let chrome: ReturnType<typeof createChromeMock>;
+    let App: typeof import('../src/popup/App').App;
+    let render: typeof import('preact').render;
+    let act: typeof import('preact/test-utils').act;
+
+    beforeEach(async () => {
+        chrome = createChromeMock();
+        vi.stubGlobal('chrome', chrome);
+        vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn(async () => {}) } });
+        if (!document.body) document.body = document.createElement('body');
+        document.body.innerHTML = '<div id="app"></div>';
+        vi.resetModules();
+        const preact = await import('preact');
+        const testUtils = await import('preact/test-utils');
+        render = preact.render;
+        act = testUtils.act;
+        const appMod = await import('../src/popup/App');
+        App = appMod.App;
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        vi.restoreAllMocks();
+    });
+
+    async function renderApp() {
+        await act(async () => {
+            render(<App />, document.getElementById('app')!);
+        });
+        await act(async () => {
+            await new Promise(r => setTimeout(r, 50));
+        });
+    }
+
+    function emitEligibility() {
+        const port = lastPort!;
+        const inspect = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((m) => m.type === 'preview:inspect');
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: inspect!.sessionId,
+            captureMode: 'smart',
+            generation: inspect!.generation,
+            hasEligibleIframes: false,
+            hasImages: true,
+        });
+    }
+
+    it('downloads a plain .md when the toggle is off (single button)', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: false });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true, markdown: '# Hello' });
+        vi.stubGlobal('fetch', vi.fn());
+        const createObjectURL = vi.fn(() => 'blob:mock');
+        const revokeObjectURL = vi.fn();
+        vi.stubGlobal('URL', new Proxy(URL, {
+            get: (target, prop, receiver) => {
+                if (prop === 'createObjectURL') return createObjectURL;
+                if (prop === 'revokeObjectURL') return revokeObjectURL;
+                return Reflect.get(target, prop, receiver);
+            },
+        }));
+
+        await renderApp();
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        expect(document.body.textContent).toContain('.md');
+        expect(document.body.textContent).not.toContain('.md + images');
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it('renders the split button when the toggle is on and conversion succeeds', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true, markdown: '# Hello' });
+
+        await renderApp();
+        emitEligibility();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        expect(document.body.textContent).toContain('.md + images');
+    });
+
+    it('right half downloads the zip when images are present', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true });
+        chrome.tabs.sendMessage.mockResolvedValue({
+            success: true,
+            markdown: '![Hero](https://e.com/hero.png)',
+        });
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))));
+        const createObjectURL = vi.fn(() => 'blob:mock');
+        const revokeObjectURL = vi.fn();
+        vi.stubGlobal('URL', new Proxy(URL, {
+            get: (target, prop, receiver) => {
+                if (prop === 'createObjectURL') return createObjectURL;
+                if (prop === 'revokeObjectURL') return revokeObjectURL;
+                return Reflect.get(target, prop, receiver);
+            },
+        }));
+
+        await renderApp();
+        emitEligibility();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        // Find the right half button (contains ".md + images")
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const zipButton = buttons.find((b) => b.textContent?.includes('.md + images')) as HTMLButtonElement;
+        expect(zipButton).not.toBeUndefined();
+        await act(async () => { zipButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+        expect(createObjectURL).toHaveBeenCalled();
+    });
+
+    it('auto-downloads the zip when both toggles are on', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true, autoDownload: true });
+        chrome.tabs.sendMessage.mockResolvedValue({
+            success: true,
+            markdown: '![Hero](https://e.com/hero.png)',
+        });
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))));
+        const createObjectURL = vi.fn(() => 'blob:mock');
+        const revokeObjectURL = vi.fn();
+        vi.stubGlobal('URL', new Proxy(URL, {
+            get: (target, prop, receiver) => {
+                if (prop === 'createObjectURL') return createObjectURL;
+                if (prop === 'revokeObjectURL') return revokeObjectURL;
+                return Reflect.get(target, prop, receiver);
+            },
+        }));
+
+        await renderApp();
+        emitEligibility();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 200)); });
+
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+        expect(createObjectURL).toHaveBeenCalled();
+    });
+});

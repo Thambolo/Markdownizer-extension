@@ -5,9 +5,10 @@ interface StatusMessageProps {
   markdownLength: number;
   error: string;
   warning?: string;
+  note?: string;
 }
 
-export function StatusMessage({ status, markdownLength, error, warning }: StatusMessageProps) {
+export function StatusMessage({ status, markdownLength, error, warning, note }: StatusMessageProps) {
   const showWarning = warning && status !== 'error';
 
   return (
@@ -35,7 +36,7 @@ export function StatusMessage({ status, markdownLength, error, warning }: Status
       </h2>
 
       <p class={`text-[10px] font-mono mt-1 ${status === 'error' ? 'text-red-400' : 'text-slate-400'}`}>
-        {status === 'success' && `${markdownLength} chars`}
+        {status === 'success' && (note ? `${markdownLength} chars · ${note}` : `${markdownLength} chars`)}
         {status === 'error' && error}
       </p>
 
