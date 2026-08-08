@@ -80,7 +80,8 @@ VITE_API_URL=https://api.yourdomain.com npm run build
 Markdownizer follows the Principle of Least Privilege:
 *   `activeTab`: Required to capture the structure of the currently focused page.
 *   `scripting`: Required to execute the extraction engine within the page context.
-*   `storage`: Required to persist user preferences (auto-download settings and capture preview toggle).
+*   `storage`: Required to persist user preferences (auto-download settings and capture preview toggle) and to keep the zip-download progress available across popup opens (`storage.session`).
+*   `downloads`: Required to trigger the ZIP / Markdown download from the background service worker, so downloads continue even if the popup is closed.
 
 ## License
 
