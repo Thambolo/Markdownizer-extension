@@ -1910,6 +1910,53 @@ describe('Include images toggle', () => {
         expect(inspects.length).toBeGreaterThanOrEqual(2);
     });
 
+    it('re-inspects with includeIframes true when auto-inclusion flips iframes on', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+        const port = lastPort!;
+
+        const inspectsOf = () => port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number; includeIframes?: boolean })
+            .filter((m) => m.type === 'preview:inspect');
+
+        // Page with NO root images: the only images live inside an eligible
+        // iframe. The content script computed hasImages with includeIframes:
+        // false, so the images toggle must not appear yet.
+        const initial = inspectsOf();
+        expect(initial).toHaveLength(1);
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: initial[0].sessionId,
+            captureMode: 'smart',
+            generation: initial[0].generation,
+            hasEligibleIframes: true,
+            hasImages: false,
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        // Auto-inclusion flips include-iframes false -> true: a re-inspection
+        // must be sent, and it must carry includeIframes: true so the content
+        // script re-evaluates frame images under the new capture setting.
+        const inspects = inspectsOf();
+        expect(inspects.length).toBeGreaterThanOrEqual(2);
+        const latest = inspects[inspects.length - 1];
+        expect(latest).toHaveProperty('includeIframes', true);
+
+        // Second eligibility from the re-inspection: the frame image now
+        // counts, so the include-images toggle appears (F8 + F6 end-to-end).
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: latest.sessionId,
+            captureMode: 'smart',
+            generation: latest.generation,
+            hasEligibleIframes: true,
+            hasImages: true,
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(document.querySelector('#include-images-toggle')).not.toBeNull();
+    });
+
     it('sends the current include-iframes state with every inspect', async () => {
         chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: true });
         chrome.tabs.sendMessage.mockResolvedValue({ success: true });

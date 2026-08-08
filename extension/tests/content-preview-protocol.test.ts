@@ -223,6 +223,32 @@ class StubMutationObserver {
     trigger(records: MutationRecord[] = []): void { this.callback(records, {} as MutationObserver); }
 }
 
+// Captured at module load (before any test stubs the global): the real jsdom
+// MutationObserver implementation.
+const RealMutationObserver = globalThis.MutationObserver;
+
+/**
+ * Wraps the real jsdom MutationObserver while recording every observed target,
+ * so tests can assert which documents actually got a live observer attached.
+ */
+class RecordingMutationObserver {
+    static observedTargets: unknown[] = [];
+    private inner: MutationObserver;
+    constructor(callback: MutationCallback) {
+        this.inner = new RealMutationObserver(callback);
+    }
+    observe(target: Node, options?: MutationObserverInit): void {
+        RecordingMutationObserver.observedTargets.push(target);
+        this.inner.observe(target, options);
+    }
+    disconnect(): void {
+        this.inner.disconnect();
+    }
+    takeRecords(): MutationRecord[] {
+        return this.inner.takeRecords();
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('Content-script preview protocol', () => {
@@ -564,6 +590,8 @@ describe('Content-script preview protocol', () => {
 
     it('refreshes eligibility when a loaded same-origin iframe document mutates', async () => {
         setupDOM('<body><main><h1>Smart only</h1><iframe></iframe></main></body>');
+        RecordingMutationObserver.observedTargets = [];
+        vi.stubGlobal('MutationObserver', RecordingMutationObserver);
         await import('../src/content');
 
         const port = createMockPort('markdownizer-capture-preview');
@@ -591,24 +619,68 @@ describe('Content-script preview protocol', () => {
                 hasImages: false,
             }),
         );
+
+        // The frame's document is a separate DOM tree the root observer cannot
+        // see, so the watcher must have attached a REAL observer to it.
+        expect(RecordingMutationObserver.observedTargets).toContain(frameDoc);
         port.postMessage.mockClear();
 
-        // Mutate inside the frame document: the img gains a src. The root
-        // observer cannot see this (separate DOM tree), so a frame-document
-        // observer must schedule the refresh.
+        // Real DOM mutation inside the frame document: the img gains a src.
+        // The mutation must reach handleMutations through the real jsdom
+        // MutationObserver — no manual callback invocation.
         const frameImg = frameDoc.getElementById('later') as HTMLImageElement;
         frameImg.setAttribute('src', 'https://example.com/later.png');
-        lastMutationObserver?.trigger([{
-            type: 'attributes',
-            target: frameImg,
-            attributeName: 'src',
-        } as unknown as MutationRecord]);
 
         await new Promise((resolve) => setTimeout(resolve, 50));
         expect(port.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'preview:eligibility',
                 sessionId: 'frame-mut',
+                hasImages: true,
+            }),
+        );
+    });
+
+    it('attaches a frame-document observer to an iframe added after inspection', async () => {
+        setupDOM('<body><main><h1>Smart only</h1></main></body>');
+        RecordingMutationObserver.observedTargets = [];
+        vi.stubGlobal('MutationObserver', RecordingMutationObserver);
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+        port.emitMessage({
+            type: 'preview:inspect',
+            sessionId: 'add-frame',
+            captureMode: 'smart',
+            generation: 1,
+            includeIframes: true,
+        });
+        port.postMessage.mockClear();
+
+        // A NEW same-origin iframe with a lazy img is added to the root after
+        // inspection. The load/mutation refresh must reconcile frame observers.
+        const iframe = document.createElement('iframe');
+        document.querySelector('main')!.appendChild(iframe);
+        const frameDoc = iframe.contentDocument!;
+        frameDoc.write('<img id="later" src="">');
+        frameDoc.close();
+
+        // Wait for the rAF-coalesced refresh (root observer saw the addition).
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(RecordingMutationObserver.observedTargets).toContain(frameDoc);
+        port.postMessage.mockClear();
+
+        // A real mutation inside the NEW frame document must reach the observer
+        // attached by the refresh-path reconcile.
+        const frameImg = frameDoc.getElementById('later') as HTMLImageElement;
+        frameImg.setAttribute('src', 'https://example.com/later.png');
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'preview:eligibility',
+                sessionId: 'add-frame',
                 hasImages: true,
             }),
         );

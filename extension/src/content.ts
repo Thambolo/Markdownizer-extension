@@ -52,7 +52,7 @@ chrome.runtime.onConnect.addListener((port) => {
     let acceptedInspectionGeneration = -1;
     let currentSessionId = '';
     let eligibilityObserver: MutationObserver | null = null;
-    let frameObservers: MutationObserver[] = [];
+    const frameObserverMap = new Map<HTMLIFrameElement, { observer: MutationObserver; document: Document }>();
     let refreshFrame = 0;
     let watcherActive = true;
 
@@ -81,6 +81,12 @@ chrome.runtime.onConnect.addListener((port) => {
         if (refreshFrame) return;
         const refresh = () => {
             refreshFrame = 0;
+            // Reconcile frame-document observers before re-reading: iframes
+            // added to the root since the last refresh (or navigated frames
+            // with a replaced document) get a live observer now, so their
+            // later mutations keep the toggle fresh. Diff-based and
+            // rAF-coalesced, so a no-op when nothing changed.
+            reconcileFrameDocumentObservers(cachedRoot ?? document.body);
             postEligibility();
         };
         if (typeof requestAnimationFrame === 'function') {
@@ -166,22 +172,37 @@ chrome.runtime.onConnect.addListener((port) => {
             attributeFilter: ['src', 'srcdoc', 'sandbox', 'title'],
         });
         document.addEventListener('load', handleFrameLoad, true);
-        attachFrameDocumentObservers(observeTarget);
+        reconcileFrameDocumentObservers(observeTarget);
     };
 
     /**
      * A frame's document is a separate DOM tree: mutations inside an already
      * loaded same-origin frame would never reach the root observer, leaving
-     * the toggle stale (e.g. lazy-loaded images inside the frame). Attach one
-     * observer per readable top-level frame, bounded by IFRAME_MAX_COUNT.
+     * the toggle stale (e.g. lazy-loaded images inside the frame). Keep one
+     * observer per readable top-level frame, bounded by IFRAME_MAX_COUNT,
+     * and diff the attachments against the current root so that iframes
+     * added after inspection get observed and navigated frames get re-observed
+     * (old document disconnected, new document attached).
      * Frames inside frames are intentionally NOT observed here — the watcher
      * restarts on every inspection, so nested content is picked up when a
      * parent frame becomes eligible or the user re-inspects.
      */
-    const attachFrameDocumentObservers = (observeTarget: HTMLElement): void => {
+    const reconcileFrameDocumentObservers = (observeTarget: HTMLElement): void => {
         const frames = Array.from(observeTarget.querySelectorAll<HTMLIFrameElement>('iframe'));
+
+        // Detach entries whose frame left the root or whose document changed
+        // (navigation replaces the frame's document).
+        for (const [frame, entry] of frameObserverMap) {
+            if (!frames.includes(frame) || entry.document !== readSameOriginFrame(frame)) {
+                entry.observer.disconnect();
+                frameObserverMap.delete(frame);
+            }
+        }
+
+        // Attach observers for readable frames not yet tracked.
         for (const frame of frames) {
-            if (frameObservers.length >= IFRAME_MAX_COUNT) break;
+            if (frameObserverMap.size >= IFRAME_MAX_COUNT) break;
+            if (frameObserverMap.has(frame)) continue;
             const frameDocument = readSameOriginFrame(frame);
             if (!frameDocument) continue;
             const observer = new MutationObserver(handleMutations);
@@ -191,7 +212,7 @@ chrome.runtime.onConnect.addListener((port) => {
                 attributes: true,
                 attributeFilter: ['src', 'srcdoc', 'sandbox', 'title'],
             });
-            frameObservers.push(observer);
+            frameObserverMap.set(frame, { observer, document: frameDocument });
         }
     };
 
@@ -199,8 +220,8 @@ chrome.runtime.onConnect.addListener((port) => {
         watcherActive = false;
         eligibilityObserver?.disconnect();
         eligibilityObserver = null;
-        for (const observer of frameObservers) observer.disconnect();
-        frameObservers = [];
+        for (const { observer } of frameObserverMap.values()) observer.disconnect();
+        frameObserverMap.clear();
         document.removeEventListener('load', handleFrameLoad, true);
         if (refreshFrame) {
             if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(refreshFrame);

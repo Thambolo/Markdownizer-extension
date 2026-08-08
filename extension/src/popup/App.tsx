@@ -65,6 +65,16 @@ export function App() {
     if (previewEnabledRef.current && sessionRef.current && prev !== now) {
       sessionRef.current.setIncludeIframes(now);
     }
+    if (sessionRef.current && prev !== now) {
+        // Auto-inclusion flipped iframes off -> on (or the reverse): the
+        // content script's last eligibility was computed under the old
+        // include-iframes choice, so re-inspect under the new one. Not gated
+        // on preview being enabled — the session stays live for eligibility
+        // (mirror F4). Terminates: the re-inspection's eligibility returns
+        // with prev === now, so no further re-inspection.
+        inspectionGenerationRef.current = 0;
+        requestIframeInspection(sessionRef.current, message.captureMode);
+    }
     setImagesEligible(message.hasImages);
   };
 
@@ -125,6 +135,10 @@ export function App() {
         sessionRef.current = null;
       }
     };
+    // Mount-only effect: runs once per popup open. All captured values are
+    // refs and state setters; the session and handlers are intentionally
+    // bound to the popup's lifetime, not to dependency changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const sanitizeTitle = (title?: string) => {
