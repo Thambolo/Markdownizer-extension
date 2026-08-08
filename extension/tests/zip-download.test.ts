@@ -151,6 +151,44 @@ describe('downloadAllImages', () => {
 
 import { unzipSync, strFromU8 } from 'fflate';
 
+/**
+ * Parse the ZIP central directory and return each entry's compression method
+ * (0 = STORE, 8 = DEFLATE). Robust regardless of data-descriptor flags, which
+ * only affect local headers. The EOCD record is the last one in the buffer.
+ */
+function compressionMethods(zipBytes: Uint8Array): Map<string, number> {
+    const view = new DataView(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength);
+    const methods = new Map<string, number>();
+
+    // EOCD: signature "PK\x05\x06", fixed 22 bytes before any archive comment.
+    let eocd = -1;
+    for (let i = zipBytes.byteLength - 22; i >= 0; i -= 1) {
+        if (view.getUint32(i, true) === 0x06054b50) {
+            eocd = i;
+            break;
+        }
+    }
+    if (eocd === -1) throw new Error('End-Of-Central-Directory record not found');
+
+    const entryCount = view.getUint16(eocd + 10, true);
+    const centralOffset = view.getUint32(eocd + 16, true);
+
+    let offset = centralOffset;
+    for (let i = 0; i < entryCount; i += 1) {
+        if (view.getUint32(offset, true) !== 0x02014b50) {
+            throw new Error(`Unexpected central directory entry signature at ${offset}`);
+        }
+        const method = view.getUint16(offset + 10, true);
+        const nameLen = view.getUint16(offset + 28, true);
+        const extraLen = view.getUint16(offset + 30, true);
+        const commentLen = view.getUint16(offset + 32, true);
+        const name = new TextDecoder().decode(zipBytes.slice(offset + 46, offset + 46 + nameLen));
+        methods.set(name, method);
+        offset += 46 + nameLen + extraLen + commentLen;
+    }
+    return methods;
+}
+
 describe('buildReadme', () => {
     it('documents the primary file, relative paths, and file listing', () => {
         const readme = buildReadme({
@@ -185,6 +223,13 @@ describe('buildZipArchive', () => {
         expect(Array.from(files['images/img-001.png'])).toEqual([1, 2, 3]);
         // Stored image: exact byte length in the archive entry
         expect(files['images/img-001.png'].byteLength).toBe(3);
+        // Compression methods read from the central directory: images STORED,
+        // README/markdown DEFLATED. This is the only check that can tell
+        // STORE apart from DEFLATE (decompressed lengths match either way).
+        const methods = compressionMethods(zip);
+        expect(methods.get('images/img-001.png')).toBe(0);
+        expect(methods.get('README.md')).toBe(8);
+        expect(methods.get('page.md')).toBe(8);
     });
 });
 

@@ -203,7 +203,7 @@ export async function downloadAllImages(
     return { bundled, skipped };
 }
 
-import { zipSync, strToU8 } from 'fflate';
+import { zipSync, strToU8, type Zippable } from 'fflate';
 
 export interface BundledImage {
     localPath: string;
@@ -247,13 +247,15 @@ export function buildZipArchive(entries: {
     markdown: string;
     markdownFilename: string;
     images: BundledImage[];
-}): Uint8Array {
-    const files: Record<string, [Uint8Array, { level: number } | { store: boolean }]> = {
+}): Uint8Array<ArrayBuffer> {
+    const files: Zippable = {
         'README.md': [strToU8(entries.readme), { level: 6 }],
         [entries.markdownFilename]: [strToU8(entries.markdown), { level: 6 }],
     };
     for (const image of entries.images) {
-        files[image.localPath] = [image.bytes, { store: true }];
+        // level: 0 makes fflate emit a STORED (uncompressed) entry. There is
+        // no `store` option — zipSync derives the method solely from level.
+        files[image.localPath] = [image.bytes, { level: 0 }];
     }
     return zipSync(files);
 }
