@@ -8,6 +8,24 @@ export default defineConfig({
     preact(),
     crx({ manifest }),
   ],
+  resolve: {
+    alias: [
+      {
+        // decode-named-character-reference's `browser` export (index.dom.js)
+        // creates `document.createElement("i")` at MODULE SCOPE to decode HTML
+        // entities — unresolvable in the MV3 service worker, so any dynamic
+        // import of the remark stack from the SW fails to evaluate
+        // (ReferenceError: document is not defined). The `worker`/default
+        // entry (index.js) is a pure data map, isomorphic across browser,
+        // worker, and SW — use it for every build.
+        find: 'decode-named-character-reference',
+        replacement: new URL(
+          './node_modules/decode-named-character-reference/index.js',
+          import.meta.url,
+        ).pathname,
+      },
+    ],
+  },
   build: {
     // Vite's module-preload machinery (preload-polyfill + <link
     // rel="modulepreload">) is incompatible with extension contexts:
