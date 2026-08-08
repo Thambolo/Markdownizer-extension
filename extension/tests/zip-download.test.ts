@@ -115,6 +115,61 @@ describe('fetchImageBytes', () => {
         expect(await fetchImageBytes('https://e.com/big.png', { maxBytes: 100 })).toBeNull();
     });
 
+    it('rejects via content-length header without reading the body', async () => {
+        const stream = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                controller.enqueue(new Uint8Array(64).fill(1));
+                controller.close();
+            },
+        });
+        const response = new Response(stream, { headers: { 'content-length': '9999' } });
+        globalThis.fetch = vi.fn(async () => response) as unknown as typeof fetch;
+
+        const result = await fetchImageBytes('https://e.com/huge.png', { maxBytes: 100 });
+
+        expect(result).toBeNull();
+        // The body was never consumed: the content-length check fires first.
+        expect(response.bodyUsed).toBe(false);
+    });
+
+    it('stops streaming mid-body when the cap is exceeded', async () => {
+        // Infinite source: without bounded reads the fetch would keep pulling
+        // until the timeout aborts it (timeoutMs: 500), so a small pull count
+        // proves the cap itself stops the reads.
+        let pulls = 0;
+        const stream = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                pulls += 1;
+                controller.enqueue(new Uint8Array(64).fill(1));
+            },
+        });
+        const response = new Response(stream);
+        globalThis.fetch = vi.fn(async () => response) as unknown as typeof fetch;
+
+        const result = await fetchImageBytes('https://e.com/stream.png', { maxBytes: 128, timeoutMs: 500 });
+
+        expect(result).toBeNull();
+        // The cap tripped on the 3rd 64-byte chunk (total 192 > 128): reads stop
+        // there instead of draining the infinite source. undici buffers one
+        // chunk ahead, so the source sees 4 pulls total; without the bounded
+        // reads the count would grow until the 500ms timeout aborts.
+        expect(pulls).toBeLessThanOrEqual(4);
+        expect(response.bodyUsed).toBe(true);
+    });
+
+    it('returns bytes for a streamed body at or under the cap', async () => {
+        const stream = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                controller.enqueue(new Uint8Array([1, 2, 3]));
+                controller.close();
+            },
+        });
+        globalThis.fetch = vi.fn(async () => new Response(stream)) as unknown as typeof fetch;
+
+        const bytes = await fetchImageBytes('https://e.com/streamed.png', { maxBytes: 64 });
+        expect(Array.from(bytes!)).toEqual([1, 2, 3]);
+    });
+
     it('returns null when fetch rejects', async () => {
         globalThis.fetch = vi.fn(async () => { throw new Error('network'); }) as unknown as typeof fetch;
         expect(await fetchImageBytes('https://e.com/fail.png')).toBeNull();

@@ -114,6 +114,11 @@ const DEFAULT_MAX_TOTAL_BYTES = 60 * 1024 * 1024;
 /**
  * Fetch one image's bytes. Returns null when the image is unfetchable
  * (blob: URLs), too large, or the request fails or times out.
+ *
+ * The byte cap is HARD: a declared content-length beyond the cap is rejected
+ * before the body is touched, and streamed bodies are read with bounded
+ * reads — the stream is cancelled mid-download the moment the cap is hit,
+ * so a pathological image can never exhaust memory or bandwidth.
  */
 export async function fetchImageBytes(
     url: string,
@@ -135,8 +140,43 @@ export async function fetchImageBytes(
         try {
             const response = await fetch(url, { signal: controller.signal });
             if (!response.ok) return null;
-            const bytes = new Uint8Array(await response.arrayBuffer());
-            if (bytes.byteLength > maxBytes) return null;
+
+            // Hard cap up front: a declared oversized body is rejected without
+            // reading a single byte of it.
+            const declaredLength = Number(response.headers.get('content-length'));
+            if (Number.isFinite(declaredLength) && declaredLength > maxBytes) return null;
+
+            // Defensive fallback when the response exposes no readable body
+            // stream: whole-body read, still gated by the length check.
+            if (!response.body) {
+                const bytes = new Uint8Array(await response.arrayBuffer());
+                if (bytes.byteLength > maxBytes) return null;
+                return bytes;
+            }
+
+            // Stream the body with bounded reads so an oversized image is cut
+            // off mid-download instead of being buffered in full first. The
+            // abort timer stays live for the whole read.
+            const reader = response.body.getReader();
+            const chunks: Uint8Array[] = [];
+            let total = 0;
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (!value) continue;
+                total += value.byteLength;
+                if (total > maxBytes) {
+                    await reader.cancel().catch(() => {});
+                    return null;
+                }
+                chunks.push(value);
+            }
+            const bytes = new Uint8Array(total);
+            let offset = 0;
+            for (const chunk of chunks) {
+                bytes.set(chunk, offset);
+                offset += chunk.byteLength;
+            }
             return bytes;
         } finally {
             clearTimeout(timer);
