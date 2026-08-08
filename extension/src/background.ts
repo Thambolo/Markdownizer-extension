@@ -137,8 +137,16 @@ async function handleBuildZip(request: BuildZipRequest, sendResponse: (response:
     const writeState = (state: Record<string, unknown>): void => {
         chrome.storage.session.set({ activeZipBuild: { buildId, startedAt, ...state } }).catch(() => {});
     };
-    const clearState = (): void => {
-        chrome.storage.session.remove('activeZipBuild').catch(() => {});
+    const clearState = async (): Promise<void> => {
+        // Compare-and-clear: a newer build may have overwritten
+        // activeZipBuild while this one was running, so only remove state
+        // that still belongs to THIS build. Never throws: a leftover stale
+        // state is cleaned up by the next zip:status handler.
+        const stored = await chrome.storage.session.get('activeZipBuild').catch(() => ({}));
+        const state = (stored as { activeZipBuild?: { buildId?: string } }).activeZipBuild;
+        if (state && state.buildId === buildId) {
+            await chrome.storage.session.remove('activeZipBuild').catch(() => {});
+        }
     };
 
     try {

@@ -222,6 +222,10 @@ function decodeDataUrl(url: string): Uint8Array | null {
  * in-flight completion landing after the cap was crossed is also skipped, so
  * the total can overshoot the cap by at most one in-flight fetch. `urls` must
  * be deduped by the caller.
+ *
+ * Results are collected into index slots (index = URL position) while the
+ * pool runs, then assembled in URL order after all workers finish — so the
+ * bundled/skipped ordering reflects the document, never fetch timing.
  */
 export async function downloadAllImages(
     urls: string[],
@@ -232,8 +236,10 @@ export async function downloadAllImages(
     const concurrency = Math.min(caps.concurrency ?? DEFAULT_CONCURRENCY, urls.length);
     const onProgress = caps.onProgress;
 
-    const bundled = new Map<string, Uint8Array>();
-    const skipped: string[] = [];
+    // results[i] corresponds to urls[i]: bytes when bundled, null when
+    // skipped. Every slot is written exactly once (each index is claimed by
+    // one worker; the cap-tail loop writes nulls for the rest).
+    const results: Array<Uint8Array | null> = new Array(urls.length);
     let total = 0;
     let completed = 0;
     let nextIndex = 0;
@@ -243,8 +249,8 @@ export async function downloadAllImages(
             if (total >= maxTotalBytes) {
                 // Cap reached: remaining not-yet-started URLs are skipped in
                 // URL order without fetching. nextIndex only moves forward, so
-                // each URL is pushed exactly once across all workers.
-                while (nextIndex < urls.length) skipped.push(urls[nextIndex++]);
+                // each slot is written exactly once across all workers.
+                while (nextIndex < urls.length) results[nextIndex++] = null;
                 return;
             }
             const index = nextIndex++;
@@ -256,15 +262,24 @@ export async function downloadAllImages(
             onProgress?.({ fetched: completed, total: urls.length });
 
             if (!bytes || total >= maxTotalBytes) {
-                skipped.push(url);
+                results[index] = null;
                 continue;
             }
             total += bytes.byteLength;
-            bundled.set(url, bytes);
+            results[index] = bytes;
         }
     };
 
     await Promise.all(Array.from({ length: concurrency }, runWorker));
+
+    // Assemble in URL order, independent of fetch completion order.
+    const bundled = new Map<string, Uint8Array>();
+    const skipped: string[] = [];
+    for (let i = 0; i < urls.length; i += 1) {
+        const bytes = results[i];
+        if (bytes === null) skipped.push(urls[i]);
+        else bundled.set(urls[i], bytes);
+    }
     return { bundled, skipped };
 }
 

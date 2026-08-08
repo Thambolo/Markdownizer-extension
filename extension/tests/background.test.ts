@@ -367,6 +367,72 @@ describe('Background zip build request flow', () => {
         expect(strFromU8(files['page.md'])).toContain('![Hero](images/img-001.png)');
     });
 
+    it('awaits the session-state removal before broadcasting zip:done', async () => {
+        // Make session.remove resolve only when released: a fire-and-forget
+        // clear would let zip:done race ahead of the removal.
+        let releaseRemove!: () => void;
+        const removeGate = new Promise<void>((resolve) => { releaseRemove = resolve; });
+        const deferredRemove = vi.fn(() => removeGate.then(() => { delete sessionData.activeZipBuild; }));
+        (global.chrome.storage.session as unknown as { remove: unknown }).remove = deferredRemove as never;
+
+        await import('../src/background');
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                {
+                    action: 'build_zip',
+                    buildId: 'b-6',
+                    payload: { markdown: '![a](https://e.com/a.png)', title: 'page', sourceUrl: null },
+                },
+                {},
+                resolve,
+            );
+        });
+
+        // Wait until the build finished its progress phase; a proper await of
+        // the removal must hold the zip:done broadcast back until release.
+        await vi.waitFor(() => {
+            const msgs = sendMessageSpy.mock.calls.map((c) => c[0]);
+            expect(msgs.some((m) => m.type === 'zip:progress' && m.phase === 'build')).toBe(true);
+        });
+        // A couple of macrotask turns: an un-awaited remove would already
+        // have let zip:done through by now.
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        const beforeRelease = sendMessageSpy.mock.calls.map((c) => c[0]);
+        expect(beforeRelease.some((m) => m.type === 'zip:done')).toBe(false);
+
+        releaseRemove();
+        const response = await responsePromise;
+        expect(response).toMatchObject({ success: true, downloaded: 'zip' });
+        expect(deferredRemove).toHaveBeenCalledWith('activeZipBuild');
+        // The state is already gone by the time the done broadcast is captured.
+        const msgs = sendMessageSpy.mock.calls.map((c) => c[0]);
+        expect(msgs.some((m) => m.type === 'zip:done' && m.buildId === 'b-6')).toBe(true);
+        expect(sessionData.activeZipBuild).toBeUndefined();
+    });
+
+    it('leaves another build\'s session state in place when this build finishes (compare-and-clear)', async () => {
+        await import('../src/background');
+        // A second build overwrote the session state while this one ran; the
+        // first build's final clear must NOT remove the other build's state.
+        // No images -> no progress writes -> the seed survives to the end.
+        sessionData.activeZipBuild = { buildId: 'other-build', phase: 'fetch', fetched: 2, total: 10, startedAt: 1 };
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                {
+                    action: 'build_zip',
+                    buildId: 'b-1',
+                    payload: { markdown: 'plain text, no images', title: 'page', sourceUrl: null },
+                },
+                {},
+                resolve,
+            );
+        });
+        const response = await responsePromise;
+        expect(response).toMatchObject({ success: true, downloaded: 'md' });
+        expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'other-build' });
+    });
+
     it('zip:status reports the live build and clears stale state', async () => {
         await import('../src/background');
         sessionData.activeZipBuild = { buildId: 'b-live', phase: 'fetch', fetched: 3, total: 10, startedAt: 1 };

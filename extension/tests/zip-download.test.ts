@@ -263,6 +263,62 @@ describe('downloadAllImages pool', () => {
         ]);
     });
 
+    it('orders bundled images by URL position, not fetch completion order', async () => {
+        // Gate the FIRST url until the other two have completed: bundled
+        // insertion order must follow the URL list, not fetch timing.
+        let releaseFirst!: () => void;
+        const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+        globalThis.fetch = vi.fn(async (url: string) => {
+            if (url === 'https://e.com/a.png') await firstGate;
+            return new Response(new Uint8Array([7]));
+        }) as unknown as typeof fetch;
+
+        const urls = ['https://e.com/a.png', 'https://e.com/b.png', 'https://e.com/c.png'];
+        const pending = downloadAllImages(urls, { concurrency: 3 });
+
+        // b and c start and finish first; a stays gated.
+        await vi.waitFor(() => {
+            expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(3);
+        });
+        await new Promise((r) => setTimeout(r, 10));
+        releaseFirst();
+
+        const { bundled, skipped } = await pending;
+        expect(Array.from(bundled.keys())).toEqual([
+            'https://e.com/a.png',
+            'https://e.com/b.png',
+            'https://e.com/c.png',
+        ]);
+        expect(skipped).toEqual([]);
+    });
+
+    it('orders skipped URLs by URL position when completions are out of order', async () => {
+        let releaseFirst!: () => void;
+        const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+        globalThis.fetch = vi.fn(async (url: string) => {
+            if (url === 'https://e.com/a.png') {
+                await firstGate;
+                throw new Error('fail');
+            }
+            if (url === 'https://e.com/b.png') throw new Error('fail');
+            return new Response(new Uint8Array([7]));
+        }) as unknown as typeof fetch;
+
+        const urls = ['https://e.com/a.png', 'https://e.com/b.png', 'https://e.com/c.png'];
+        const pending = downloadAllImages(urls, { concurrency: 3 });
+
+        await vi.waitFor(() => {
+            expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(3);
+        });
+        await new Promise((r) => setTimeout(r, 10));
+        releaseFirst();
+
+        const { bundled, skipped } = await pending;
+        expect(Array.from(bundled.keys())).toEqual(['https://e.com/c.png']);
+        // b failed before a did, but skipped must follow URL order.
+        expect(skipped).toEqual(['https://e.com/a.png', 'https://e.com/b.png']);
+    });
+
     it('defaults to 10s timeout and 6-way concurrency', () => {
         expect(DEFAULT_TIMEOUT_MS).toBe(10_000);
         expect(DEFAULT_CONCURRENCY).toBe(6);
