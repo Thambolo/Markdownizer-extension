@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test": "vitest",
-    "test:browser": "vitest --config vitest.browser.config.ts --run"
+    "test:browser": "vitest --config vitest.browser.config.ts --run",
+    "check:dist": "node scripts/verify-dist.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.3",
