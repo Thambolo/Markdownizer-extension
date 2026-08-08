@@ -241,17 +241,23 @@ export function hasEligibleIframesLightweight(sourceRoot: HTMLElement): boolean 
  * Lightweight image eligibility check: true when the current capture includes
  * at least one `<img>` that could be bundled — non-empty src, not a blob: URL
  * (page-scoped, unfetchable from the popup), and not a confirmed 1x1 tracking
- * pixel. Images inside readable same-origin iframes count too, mirroring the
- * iframe capture and the recursion in `hasEligibleIframesLightweight`; nested
- * frame reads are bounded by the shared iframe budget (count and depth).
+ * pixel. When `includeIframes` is true, images inside readable same-origin
+ * iframes count too, mirroring the iframe capture; when false (the default)
+ * iframe images never reach the Markdown, so they are ignored. Nested frame
+ * reads are bounded by the shared iframe budget (count and depth).
  * Not-yet-loaded images (naturalWidth 0) count as eligible; the bundle step
  * filters failures anyway. No clones, no serialization.
  */
-export function hasImagesInRoot(sourceRoot: HTMLElement): boolean {
-    return hasImagesInSubtree(sourceRoot, createIframeBudget(), 0);
+export function hasImagesInRoot(sourceRoot: HTMLElement, includeIframes = false): boolean {
+    return hasImagesInSubtree(sourceRoot, createIframeBudget(), 0, includeIframes);
 }
 
-function hasImagesInSubtree(root: HTMLElement, budget: IframeBudget, frameDepth: number): boolean {
+function hasImagesInSubtree(
+    root: HTMLElement,
+    budget: IframeBudget,
+    frameDepth: number,
+    includeIframes: boolean,
+): boolean {
     for (const img of root.querySelectorAll<HTMLImageElement>('img')) {
         const src = img.getAttribute('src');
         if (!src || src.startsWith('blob:')) continue;
@@ -260,7 +266,8 @@ function hasImagesInSubtree(root: HTMLElement, budget: IframeBudget, frameDepth:
         return true;
     }
 
-    if (frameDepth >= budget.maxDepth) return false;
+    // Only recurse into frames when the capture will actually include them.
+    if (!includeIframes || frameDepth >= budget.maxDepth) return false;
 
     const sourceFrames = Array.from(root.querySelectorAll<HTMLIFrameElement>('iframe'));
     for (const sourceFrame of sourceFrames) {
@@ -268,7 +275,7 @@ function hasImagesInSubtree(root: HTMLElement, budget: IframeBudget, frameDepth:
         const frameDocument = readSameOriginFrame(sourceFrame);
         if (!frameDocument?.body) continue;
         budget.count += 1;
-        if (hasImagesInSubtree(frameDocument.body, budget, frameDepth + 1)) return true;
+        if (hasImagesInSubtree(frameDocument.body, budget, frameDepth + 1, includeIframes)) return true;
     }
     return false;
 }

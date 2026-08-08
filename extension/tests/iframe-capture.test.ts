@@ -464,7 +464,7 @@ describe('hasEligibleIframesLightweight', () => {
     });
 });
 describe('hasImagesInRoot', () => {
-    let hasImagesInRoot: (root: HTMLElement) => boolean;
+    let hasImagesInRoot: (root: HTMLElement, includeIframes?: boolean) => boolean;
 
     beforeEach(async () => {
         vi.resetModules();
@@ -541,12 +541,32 @@ describe('hasImagesInRoot', () => {
         return { root, iframe };
     }
 
-    it('returns true for an image inside a same-origin iframe', () => {
+    it('returns true for an image inside a same-origin iframe when includeIframes is true', () => {
         const { root } = createRootWithFrame(
             '<iframe></iframe>',
             '<img src="https://example.com/frame.png">',
         );
+        expect(hasImagesInRoot(root, true)).toBe(true);
+    });
+
+    it('does not count images inside same-origin iframes when includeIframes is false (default)', () => {
+        const { root } = createRootWithFrame(
+            '<iframe></iframe>',
+            '<img src="https://example.com/frame.png">',
+        );
+        // Frame images never reach the Markdown when iframes are excluded
+        expect(hasImagesInRoot(root)).toBe(false);
+        expect(hasImagesInRoot(root, false)).toBe(false);
+    });
+
+    it('counts root images regardless of includeIframes', () => {
+        const { root } = createRootWithFrame(
+            '<img src="https://example.com/root.png"><iframe></iframe>',
+            '<img src="https://example.com/frame.png">',
+        );
         expect(hasImagesInRoot(root)).toBe(true);
+        expect(hasImagesInRoot(root, false)).toBe(true);
+        expect(hasImagesInRoot(root, true)).toBe(true);
     });
 
     it('returns false when the image is only in an unreadable (cross-origin) iframe', () => {
@@ -558,7 +578,9 @@ describe('hasImagesInRoot', () => {
             configurable: true,
             get: () => null,
         });
+        // Even with includeIframes on, an unreadable frame contributes nothing
         expect(hasImagesInRoot(root)).toBe(false);
+        expect(hasImagesInRoot(root, true)).toBe(false);
     });
 
     it('returns false for blob-only images inside a same-origin frame', () => {
@@ -566,7 +588,7 @@ describe('hasImagesInRoot', () => {
             '<iframe></iframe>',
             '<img src="blob:https://example.com/uuid">',
         );
-        expect(hasImagesInRoot(root)).toBe(false);
+        expect(hasImagesInRoot(root, true)).toBe(false);
     });
 
     it('returns true when the root and a frame both contribute images', () => {
@@ -588,7 +610,7 @@ describe('hasImagesInRoot', () => {
             configurable: true,
             get: () => nestedDoc,
         });
-        expect(hasImagesInRoot(root)).toBe(true);
+        expect(hasImagesInRoot(root, true)).toBe(true);
     });
 
     it('respects the iframe count budget across frames', () => {
@@ -610,6 +632,6 @@ describe('hasImagesInRoot', () => {
             root.appendChild(frame);
         }
         // The only image lives in the 21st frame — beyond the budget.
-        expect(hasImagesInRoot(root)).toBe(false);
+        expect(hasImagesInRoot(root, true)).toBe(false);
     });
 });

@@ -519,6 +519,101 @@ describe('Content-script preview protocol', () => {
         });
     });
 
+    it('reports iframe images only when the inspect includes includeIframes', async () => {
+        setupDOM('<body><main><h1>Smart only</h1><iframe></iframe></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+
+        const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+        const frameDoc = iframe.contentDocument!;
+        frameDoc.write('<img src="https://example.com/frame.png">');
+        frameDoc.close();
+
+        // Without includeIframes the frame image must not count — it never
+        // reaches the Markdown, so the images toggle must stay hidden.
+        port.emitMessage({ type: 'preview:inspect', sessionId: 'img-off', captureMode: 'smart', generation: 1 });
+        expect(port.postMessage).toHaveBeenCalledWith({
+            type: 'preview:eligibility',
+            sessionId: 'img-off',
+            captureMode: 'smart',
+            generation: 1,
+            hasEligibleIframes: false,
+            hasImages: false,
+        });
+
+        port.postMessage.mockClear();
+        // With includeIframes the same frame image counts.
+        port.emitMessage({
+            type: 'preview:inspect',
+            sessionId: 'img-on',
+            captureMode: 'smart',
+            generation: 2,
+            includeIframes: true,
+        });
+        expect(port.postMessage).toHaveBeenCalledWith({
+            type: 'preview:eligibility',
+            sessionId: 'img-on',
+            captureMode: 'smart',
+            generation: 2,
+            hasEligibleIframes: false,
+            hasImages: true,
+        });
+    });
+
+    it('refreshes eligibility when a loaded same-origin iframe document mutates', async () => {
+        setupDOM('<body><main><h1>Smart only</h1><iframe></iframe></main></body>');
+        await import('../src/content');
+
+        const port = createMockPort('markdownizer-capture-preview');
+        connectListener?.(port);
+
+        // A loaded same-origin frame whose document contains a lazy img with
+        // no src yet.
+        const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+        const frameDoc = iframe.contentDocument!;
+        frameDoc.write('<img id="later" src="">');
+        frameDoc.close();
+
+        port.emitMessage({
+            type: 'preview:inspect',
+            sessionId: 'frame-mut',
+            captureMode: 'smart',
+            generation: 1,
+            includeIframes: true,
+        });
+        // Initial eligibility: the frame img has no src, so no images.
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'preview:eligibility',
+                sessionId: 'frame-mut',
+                hasImages: false,
+            }),
+        );
+        port.postMessage.mockClear();
+
+        // Mutate inside the frame document: the img gains a src. The root
+        // observer cannot see this (separate DOM tree), so a frame-document
+        // observer must schedule the refresh.
+        const frameImg = frameDoc.getElementById('later') as HTMLImageElement;
+        frameImg.setAttribute('src', 'https://example.com/later.png');
+        lastMutationObserver?.trigger([{
+            type: 'attributes',
+            target: frameImg,
+            attributeName: 'src',
+        } as unknown as MutationRecord]);
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(port.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'preview:eligibility',
+                sessionId: 'frame-mut',
+                hasImages: true,
+            }),
+        );
+    });
+
     it('ignores mutations outside the current Smart root', async () => {
         setupDOM('<body><main><p>Main content</p></main><aside></aside></body>');
         await import('../src/content');

@@ -1910,6 +1910,59 @@ describe('Include images toggle', () => {
         expect(inspects.length).toBeGreaterThanOrEqual(2);
     });
 
+    it('sends the current include-iframes state with every inspect', async () => {
+        chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+        const port = lastPort!;
+
+        const inspectOf = () => port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; includeIframes?: boolean })
+            .find((m) => m.type === 'preview:inspect');
+
+        // Initial state excludes iframes — the inspect must say so, or an
+        // image-only iframe would surface the images toggle for images that
+        // will never be in the Markdown.
+        expect(inspectOf()).toHaveProperty('includeIframes', false);
+
+        // Eligibility with frames makes the iframe toggle available and included.
+        const inspect = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((m) => m.type === 'preview:inspect');
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: inspect!.sessionId,
+            captureMode: 'smart',
+            generation: inspect!.generation,
+            hasEligibleIframes: true,
+            hasImages: false,
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const iframeToggle = document.querySelector('#include-iframes-toggle') as HTMLInputElement;
+        expect(iframeToggle).not.toBeNull();
+
+        // Toggling off re-inspects with includeIframes: false.
+        port.postMessage.mockClear();
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(iframeToggle, false);
+            iframeToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(inspectOf()).toHaveProperty('includeIframes', false);
+
+        // Toggling back on re-inspects with includeIframes: true.
+        port.postMessage.mockClear();
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(iframeToggle, true);
+            iframeToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(inspectOf()).toHaveProperty('includeIframes', true);
+    });
+
     it('re-inspects iframe eligibility when preview is disabled', async () => {
         chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: false });
         chrome.tabs.sendMessage.mockResolvedValue({ success: true });

@@ -1,6 +1,11 @@
 import './content-preview.css';
 import { getContentForMode, getReadabilityContent, selectCaptureRoot } from './extractor';
-import { hasEligibleIframesLightweight, hasImagesInRoot } from './iframe-capture';
+import {
+    hasEligibleIframesLightweight,
+    hasImagesInRoot,
+    readSameOriginFrame,
+    IFRAME_MAX_COUNT,
+} from './iframe-capture';
 import { skeletonize, rehydrateMarkdown } from './logic';
 import { shouldUseReadability } from './payload';
 import { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE } from './content-preview';
@@ -43,10 +48,11 @@ chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== PREVIEW_PORT_NAME) return;
 
     const generation = nextGeneration++;
-    let latestInspection: { captureMode: CaptureMode; generation: number } | null = null;
+    let latestInspection: { captureMode: CaptureMode; generation: number; includeIframes: boolean } | null = null;
     let acceptedInspectionGeneration = -1;
     let currentSessionId = '';
     let eligibilityObserver: MutationObserver | null = null;
+    let frameObservers: MutationObserver[] = [];
     let refreshFrame = 0;
     let watcherActive = true;
 
@@ -66,7 +72,7 @@ chrome.runtime.onConnect.addListener((port) => {
             captureMode: latestInspection.captureMode,
             generation: latestInspection.generation,
             hasEligibleIframes: hasEligibleIframesLightweight(root),
-            hasImages: hasImagesInRoot(root),
+            hasImages: hasImagesInRoot(root, latestInspection.includeIframes),
         };
         port.postMessage(response);
     };
@@ -94,26 +100,37 @@ chrome.runtime.onConnect.addListener((port) => {
         return false;
     };
 
+    /**
+     * Tag-name check (not instanceof): a loaded same-origin frame's document
+     * is a separate DOM tree whose nodes belong to the frame's realm, so
+     * `instanceof HTMLImageElement` never matches them. Tag names work across
+     * realms, keeping frame-document mutations recognizable.
+     */
+    const hasIframeOrImageTag = (node: unknown): boolean => {
+        if (typeof node !== 'object' || node === null) return false;
+        const tag = (node as { tagName?: unknown }).tagName;
+        return tag === 'IFRAME' || tag === 'IMG';
+    };
+
     /** Check whether a mutation record involves iframes or images. */
     const isCaptureRelevantMutation = (record: MutationRecord): boolean => {
         if (isPreviewHostMutation(record)) return false;
 
         // Target is an iframe or image element itself (e.g. src attribute change)
-        if (record.target instanceof HTMLIFrameElement) return true;
-        if (record.target instanceof HTMLImageElement) return true;
+        if (hasIframeOrImageTag(record.target)) return true;
 
         // Added nodes include an iframe or image
         if (record.type === 'childList' && record.addedNodes?.length) {
-            const addedRelevant = Array.from(record.addedNodes).some(
-                (node) =>
-                    node instanceof Element &&
-                    (node.matches('iframe,img') || node.querySelector('iframe,img')),
-            );
+            const addedRelevant = Array.from(record.addedNodes).some((node) => {
+                const element = node as Element;
+                if (typeof element.matches !== 'function') return false;
+                return element.matches('iframe,img') || !!element.querySelector?.('iframe,img');
+            });
             if (addedRelevant) return true;
         }
 
         // Attribute change on an iframe within the cached root
-        if (record.type === 'attributes' && record.target instanceof HTMLIFrameElement) {
+        if (record.type === 'attributes' && hasIframeOrImageTag(record.target)) {
             if (cachedRoot?.contains(record.target)) return true;
         }
 
@@ -149,12 +166,41 @@ chrome.runtime.onConnect.addListener((port) => {
             attributeFilter: ['src', 'srcdoc', 'sandbox', 'title'],
         });
         document.addEventListener('load', handleFrameLoad, true);
+        attachFrameDocumentObservers(observeTarget);
+    };
+
+    /**
+     * A frame's document is a separate DOM tree: mutations inside an already
+     * loaded same-origin frame would never reach the root observer, leaving
+     * the toggle stale (e.g. lazy-loaded images inside the frame). Attach one
+     * observer per readable top-level frame, bounded by IFRAME_MAX_COUNT.
+     * Frames inside frames are intentionally NOT observed here — the watcher
+     * restarts on every inspection, so nested content is picked up when a
+     * parent frame becomes eligible or the user re-inspects.
+     */
+    const attachFrameDocumentObservers = (observeTarget: HTMLElement): void => {
+        const frames = Array.from(observeTarget.querySelectorAll<HTMLIFrameElement>('iframe'));
+        for (const frame of frames) {
+            if (frameObservers.length >= IFRAME_MAX_COUNT) break;
+            const frameDocument = readSameOriginFrame(frame);
+            if (!frameDocument) continue;
+            const observer = new MutationObserver(handleMutations);
+            observer.observe(frameDocument, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['src', 'srcdoc', 'sandbox', 'title'],
+            });
+            frameObservers.push(observer);
+        }
     };
 
     const stopEligibilityWatcher = (): void => {
         watcherActive = false;
         eligibilityObserver?.disconnect();
         eligibilityObserver = null;
+        for (const observer of frameObservers) observer.disconnect();
+        frameObservers = [];
         document.removeEventListener('load', handleFrameLoad, true);
         if (refreshFrame) {
             if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(refreshFrame);
@@ -188,7 +234,13 @@ chrome.runtime.onConnect.addListener((port) => {
                 if (cmd.generation < acceptedInspectionGeneration) return;
                 acceptedInspectionGeneration = cmd.generation;
                 currentSessionId = cmd.sessionId;
-                latestInspection = { captureMode, generation: cmd.generation };
+                latestInspection = {
+                    captureMode,
+                    generation: cmd.generation,
+                    // Default false when undefined: with iframes excluded, frame
+                    // images never reach the Markdown so they must not count.
+                    includeIframes: normalizeIncludeIframes(cmd.includeIframes),
+                };
                 // Cache the live root from selectCaptureRoot — never derive via getContentForMode
                 const newRoot = selectCaptureRoot(captureMode);
                 if (newRoot !== cachedRoot) {

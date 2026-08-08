@@ -49,7 +49,9 @@ export function App() {
   const requestIframeInspection = (session: PreviewSession, mode: CaptureMode): void => {
     const generation = inspectionGenerationRef.current + 1;
     inspectionGenerationRef.current = generation;
-    session.inspect(mode, generation);
+    // The inspect payload carries the active include-iframes choice so the
+    // content script only counts iframe images when they will be captured.
+    session.inspect(mode, generation, isIframeIncluded(iframeOptionRef.current));
   };
 
   const handleIframeEligibility = (message: PreviewEligibilityMessage): void => {

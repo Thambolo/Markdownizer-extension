@@ -8,7 +8,7 @@ import {
 
 export interface PreviewSession {
     show(captureMode: CaptureMode): void;
-    inspect(captureMode: CaptureMode, generation: number): void;
+    inspect(captureMode: CaptureMode, generation: number, includeIframes?: boolean): void;
     onEligibility(listener: (message: PreviewEligibilityMessage) => void): () => void;
     setLoading(): void;
     setReady(): void;
@@ -111,9 +111,15 @@ export async function openPreviewSession(tabId: number): Promise<PreviewSession>
 
     return {
         show: (captureMode: CaptureMode) => send('preview:show', captureMode),
-        inspect: (captureMode: CaptureMode, generation: number) => {
+        inspect: (captureMode: CaptureMode, generation: number, includeIframes?: boolean) => {
             if (disconnected) return;
-            port.postMessage({ type: 'preview:inspect', sessionId, captureMode, generation });
+            port.postMessage({
+                type: 'preview:inspect',
+                sessionId,
+                captureMode,
+                generation,
+                ...(includeIframes === undefined ? {} : { includeIframes }),
+            });
         },
         onEligibility: (listener: (message: PreviewEligibilityMessage) => void) => {
             if (disconnected) return () => {};
