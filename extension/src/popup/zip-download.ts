@@ -218,9 +218,10 @@ function decodeDataUrl(url: string): Uint8Array | null {
  *
  * Pool cap semantics: an image is bundled if cumulative bundled bytes were
  * below the total cap when its fetch completed; once the cap is reached, all
- * not-yet-started URLs (in URL order) are skipped without fetching; in-flight
- * fetches always complete and are bundled (the total may transiently overshoot
- * the cap by in-flight work). `urls` must be deduped by the caller.
+ * not-yet-started URLs (in URL order) are skipped without fetching. An
+ * in-flight completion landing after the cap was crossed is also skipped, so
+ * the total can overshoot the cap by at most one in-flight fetch. `urls` must
+ * be deduped by the caller.
  */
 export async function downloadAllImages(
     urls: string[],
