@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { getVisibleBodyContent } from '../src/extractor';
+import { hasImagesInRoot } from '../src/iframe-capture';
 
 afterEach(() => {
     document.body.replaceChildren();
@@ -82,5 +83,29 @@ describe('same-origin iframe extraction in Chromium', () => {
         expect(text).toContain('Sibling content 0');
         expect(text).toContain('Sibling content 19');
         expect(text).not.toContain('Sibling content 20');
+    });
+});
+
+describe('hasImagesInRoot (browser)', () => {
+    it('flips to true when an img is added later', () => {
+        const root = document.createElement('div');
+        document.body.appendChild(root);
+        expect(hasImagesInRoot(root)).toBe(false);
+        const img = document.createElement('img');
+        img.src = 'https://example.com/lazy.png';
+        root.appendChild(img);
+        expect(hasImagesInRoot(root)).toBe(true);
+        root.remove();
+    });
+
+    it('flips to true when an existing img gains a src', () => {
+        const root = document.createElement('div');
+        document.body.appendChild(root);
+        const img = document.createElement('img');
+        root.appendChild(img);
+        expect(hasImagesInRoot(root)).toBe(false);
+        img.src = 'https://example.com/real.png';
+        expect(hasImagesInRoot(root)).toBe(true);
+        root.remove();
     });
 });
