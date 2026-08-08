@@ -105,11 +105,14 @@ export interface DownloadCaps {
     timeoutMs?: number;
     maxBytesPerImage?: number;
     maxTotalBytes?: number;
+    concurrency?: number;
+    onProgress?: (p: { fetched: number; total: number }) => void;
 }
 
-const DEFAULT_TIMEOUT_MS = 20_000;
-const DEFAULT_MAX_BYTES_PER_IMAGE = 15 * 1024 * 1024;
-const DEFAULT_MAX_TOTAL_BYTES = 60 * 1024 * 1024;
+export const DEFAULT_TIMEOUT_MS = 10_000;
+export const DEFAULT_MAX_BYTES_PER_IMAGE = 15 * 1024 * 1024;
+export const DEFAULT_MAX_TOTAL_BYTES = 60 * 1024 * 1024;
+export const DEFAULT_CONCURRENCY = 6;
 
 /**
  * Fetch one image's bytes. Returns null when the image is unfetchable
@@ -210,8 +213,14 @@ function decodeDataUrl(url: string): Uint8Array | null {
 }
 
 /**
- * Fetch all unique image URLs, honoring per-image and total byte caps.
- * `urls` must be deduped by the caller (assignLocalPaths input order).
+ * Fetch all unique image URLs with a bounded worker pool, honoring per-image
+ * and total byte caps (values unchanged: 15 MB / 60 MB).
+ *
+ * Pool cap semantics: an image is bundled if cumulative bundled bytes were
+ * below the total cap when its fetch completed; once the cap is reached, all
+ * not-yet-started URLs (in URL order) are skipped without fetching; in-flight
+ * fetches always complete and are bundled (the total may transiently overshoot
+ * the cap by in-flight work). `urls` must be deduped by the caller.
  */
 export async function downloadAllImages(
     urls: string[],
@@ -219,27 +228,42 @@ export async function downloadAllImages(
 ): Promise<{ bundled: Map<string, Uint8Array>; skipped: string[] }> {
     const maxBytesPerImage = caps.maxBytesPerImage ?? DEFAULT_MAX_BYTES_PER_IMAGE;
     const maxTotalBytes = caps.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES;
+    const concurrency = Math.min(caps.concurrency ?? DEFAULT_CONCURRENCY, urls.length);
+    const onProgress = caps.onProgress;
+
     const bundled = new Map<string, Uint8Array>();
     const skipped: string[] = [];
     let total = 0;
+    let completed = 0;
+    let nextIndex = 0;
 
-    for (const url of urls) {
-        if (total >= maxTotalBytes) {
-            skipped.push(url);
-            continue;
+    const runWorker = async (): Promise<void> => {
+        for (;;) {
+            if (total >= maxTotalBytes) {
+                // Cap reached: remaining not-yet-started URLs are skipped in
+                // URL order without fetching. nextIndex only moves forward, so
+                // each URL is pushed exactly once across all workers.
+                while (nextIndex < urls.length) skipped.push(urls[nextIndex++]);
+                return;
+            }
+            const index = nextIndex++;
+            if (index >= urls.length) return;
+            const url = urls[index];
+
+            const bytes = await fetchImageBytes(url, { timeoutMs: caps.timeoutMs, maxBytes: maxBytesPerImage });
+            completed += 1;
+            onProgress?.({ fetched: completed, total: urls.length });
+
+            if (!bytes || total >= maxTotalBytes) {
+                skipped.push(url);
+                continue;
+            }
+            total += bytes.byteLength;
+            bundled.set(url, bytes);
         }
-        const bytes = await fetchImageBytes(url, { timeoutMs: caps.timeoutMs, maxBytes: maxBytesPerImage });
-        if (!bytes) {
-            skipped.push(url);
-            continue;
-        }
-        if (total + bytes.byteLength > maxTotalBytes) {
-            skipped.push(url);
-            continue;
-        }
-        total += bytes.byteLength;
-        bundled.set(url, bytes);
-    }
+    };
+
+    await Promise.all(Array.from({ length: concurrency }, runWorker));
     return { bundled, skipped };
 }
 
@@ -307,6 +331,15 @@ export interface ZipBuildResult {
     skippedImages: number;
 }
 
+export type ZipBuildProgress =
+    | { phase: 'fetch'; fetched: number; total: number }
+    | { phase: 'build' };
+
+export interface ZipBuildOptions {
+    onProgress?: (p: ZipBuildProgress) => void;
+    concurrency?: number;
+}
+
 /**
  * Orchestrate the bundle: collect image URLs from the markdown, fetch them,
  * rewrite references, build the archive. Returns blob: null when there is
@@ -317,12 +350,16 @@ export async function buildZipBlob(
     markdown: string,
     title: string,
     sourceUrl: string | null,
+    options: ZipBuildOptions = {},
 ): Promise<ZipBuildResult> {
     const nodes = collectImageNodes(markdown);
     const urls = nodes.map((node) => node.url);
     const uniqueUrls = Array.from(new Set(urls));
 
-    const { bundled, skipped } = await downloadAllImages(uniqueUrls);
+    const { bundled, skipped } = await downloadAllImages(uniqueUrls, {
+        concurrency: options.concurrency,
+        onProgress: (p) => options.onProgress?.({ phase: 'fetch', fetched: p.fetched, total: p.total }),
+    });
     if (bundled.size === 0) {
         return {
             blob: null,
@@ -340,6 +377,8 @@ export async function buildZipBlob(
         bytes,
     }));
     const readme = buildReadme({ title, sourceUrl, markdownFilename, images });
+
+    options.onProgress?.({ phase: 'build' });
     const zipBytes = buildZipArchive({ readme, markdown: rewritten, markdownFilename, images });
 
     return {

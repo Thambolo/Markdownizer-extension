@@ -8,6 +8,8 @@ import {
     buildReadme,
     buildZipArchive,
     buildZipBlob,
+    DEFAULT_TIMEOUT_MS,
+    DEFAULT_CONCURRENCY,
 } from '../src/popup/zip-download';
 
 describe('collectImageNodes', () => {
@@ -191,16 +193,104 @@ describe('downloadAllImages', () => {
         expect(bundled.size).toBe(1);
         expect(skipped).toEqual(['https://e.com/bad.png']);
     });
+});
 
-    it('stops bundling once the total cap is reached', async () => {
+describe('downloadAllImages pool', () => {
+    const originalFetch = globalThis.fetch;
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        vi.restoreAllMocks();
+    });
+
+    it('bundles in-flight images and skips the rest once the total cap is reached', async () => {
         const chunk = new Uint8Array(10).fill(1);
         globalThis.fetch = vi.fn(async () => new Response(chunk)) as unknown as typeof fetch;
         const { bundled, skipped } = await downloadAllImages(
             ['https://e.com/a.png', 'https://e.com/b.png', 'https://e.com/c.png'],
             { maxTotalBytes: 15 },
         );
-        expect(bundled.size).toBe(1);
-        expect(skipped).toEqual(['https://e.com/b.png', 'https://e.com/c.png']);
+        // All three start concurrently; a and b complete under the cap, c after it.
+        expect(bundled.size).toBe(2);
+        expect(skipped).toEqual(['https://e.com/c.png']);
+    });
+
+    it('skips the URL-order tail once the cap is reached (concurrency 1)', async () => {
+        const chunk = new Uint8Array(10).fill(1);
+        globalThis.fetch = vi.fn(async () => new Response(chunk)) as unknown as typeof fetch;
+        const { bundled, skipped } = await downloadAllImages(
+            ['https://e.com/a.png', 'https://e.com/b.png', 'https://e.com/c.png'],
+            { maxTotalBytes: 15, concurrency: 1 },
+        );
+        // Concurrency 1, cap 15, 10-byte chunks: a bundles (10 < 15), b STARTS
+        // (loop-top check passes at 10 < 15) and bundles at completion
+        // (10 < 15 still), c is skipped at the next loop-top check (20 >= 15).
+        expect(bundled.size).toBe(2);
+        expect(skipped).toEqual(['https://e.com/c.png']);
+    });
+
+    it('bounds parallelism to the concurrency option', async () => {
+        const urls = Array.from({ length: 6 }, (_, i) => `https://e.com/${i}.png`);
+        let inFlight = 0;
+        let peak = 0;
+        let release: (() => void) | null = null;
+        const gate = new Promise<void>((r) => { release = r; });
+        globalThis.fetch = vi.fn(async () => {
+            inFlight += 1;
+            peak = Math.max(peak, inFlight);
+            await gate;
+            inFlight -= 1;
+            return new Response(new Uint8Array([1]));
+        }) as unknown as typeof fetch;
+        const pending = downloadAllImages(urls, { concurrency: 3 });
+        // Let all workers start and fetch; then release the gate.
+        await new Promise((r) => setTimeout(r, 20));
+        release!();
+        const { bundled } = await pending;
+        expect(peak).toBe(3);
+        expect(bundled.size).toBe(6);
+    });
+
+    it('emits progress after each completed fetch', async () => {
+        globalThis.fetch = vi.fn(async () => new Response(new Uint8Array([1]))) as unknown as typeof fetch;
+        const seen: Array<{ fetched: number; total: number }> = [];
+        await downloadAllImages(
+            ['https://e.com/a.png', 'https://e.com/b.png'],
+            { onProgress: (p) => seen.push(p) },
+        );
+        expect(seen).toEqual([
+            { fetched: 1, total: 2 },
+            { fetched: 2, total: 2 },
+        ]);
+    });
+
+    it('defaults to 10s timeout and 6-way concurrency', () => {
+        expect(DEFAULT_TIMEOUT_MS).toBe(10_000);
+        expect(DEFAULT_CONCURRENCY).toBe(6);
+    });
+});
+
+describe('buildZipBlob progress', () => {
+    const originalFetch = globalThis.fetch;
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        vi.restoreAllMocks();
+    });
+
+    it('emits fetch progress and a build phase', async () => {
+        globalThis.fetch = vi.fn(async () => new Response(new Uint8Array([4, 5]))) as unknown as typeof fetch;
+        const seen: Array<{ phase: string; fetched?: number; total?: number }> = [];
+        const result = await buildZipBlob(
+            '![a](https://e.com/a.png)\n\n![b](https://e.com/b.png)',
+            'page',
+            null,
+            { onProgress: (p) => seen.push(p) },
+        );
+        expect(result.blob).not.toBeNull();
+        expect(seen).toEqual([
+            { phase: 'fetch', fetched: 1, total: 2 },
+            { phase: 'fetch', fetched: 2, total: 2 },
+            { phase: 'build' },
+        ]);
     });
 });
 
