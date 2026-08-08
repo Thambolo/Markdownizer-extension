@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { unzipSync, strFromU8 } from 'fflate';
 
 type RuntimeMessageListener = (
     request: unknown,
@@ -212,5 +213,174 @@ describe('CodeMirror MAIN-world capture', () => {
         });
 
         await expect(responsePromise).resolves.toEqual({ success: true, capture: null });
+    });
+});
+
+describe('Background zip build request flow', () => {
+    let messageListener: RuntimeMessageListener | undefined;
+    let sendMessageSpy: ReturnType<typeof vi.fn>;
+    let sessionData: Record<string, unknown>;
+    let downloadsDownload: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+        vi.resetModules();
+        vi.stubEnv('VITE_API_URL', 'https://api-markdownizer.thambolo.com/convert');
+        messageListener = undefined;
+        sendMessageSpy = vi.fn(async () => {});
+        downloadsDownload = vi.fn(async () => 'download-id');
+        sessionData = {};
+
+        global.chrome = {
+            runtime: {
+                onInstalled: { addListener: vi.fn() },
+                onMessage: {
+                    addListener: vi.fn((listener: RuntimeMessageListener) => {
+                        messageListener = listener;
+                    }),
+                },
+                sendMessage: sendMessageSpy,
+            },
+            downloads: {
+                download: downloadsDownload,
+            },
+            storage: {
+                sync: {
+                    get: vi.fn(async () => ({ user_id: 'test-user-id' })),
+                    set: vi.fn(async () => undefined),
+                },
+                local: {
+                    get: vi.fn(async () => ({})),
+                    set: vi.fn(async () => undefined),
+                },
+                session: {
+                    get: vi.fn(async (keys: string | string[]) => {
+                        const key = Array.isArray(keys) ? keys[0] : keys;
+                        return key in sessionData ? { [key]: sessionData[key] } : {};
+                    }),
+                    set: vi.fn(async (items: Record<string, unknown>) => {
+                        Object.assign(sessionData, items);
+                    }),
+                    remove: vi.fn(async (keys: string | string[]) => {
+                        const list = Array.isArray(keys) ? keys : [keys];
+                        for (const key of list) delete sessionData[key];
+                    }),
+                },
+            },
+        } as unknown as typeof chrome;
+
+        global.fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))) as unknown as typeof fetch;
+        global.btoa = (input: string) => Buffer.from(input, 'binary').toString('base64');
+    });
+
+    it('builds a zip in the service worker and downloads it as a data URL', async () => {
+        await import('../src/background');
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                {
+                    action: 'build_zip',
+                    buildId: 'b-1',
+                    payload: { markdown: '![Hero](https://e.com/hero.png)', title: 'page', sourceUrl: 'https://e.com' },
+                },
+                {},
+                resolve,
+            );
+        });
+        const response = await responsePromise;
+        expect(response).toMatchObject({ success: true, downloaded: 'zip', filename: 'page.zip', bundledImages: 1 });
+        expect(downloadsDownload).toHaveBeenCalledTimes(1);
+        const [args] = downloadsDownload.mock.calls[0] as [{ url: string; filename: string }];
+        expect(args.filename).toBe('page.zip');
+        expect(args.url.startsWith('data:application/zip;base64,')).toBe(true);
+        // Progress was relayed to storage.session and broadcast
+        expect(sessionData.activeZipBuild).toBeUndefined(); // cleared on done
+        const progressMsgs = sendMessageSpy.mock.calls.map((c) => c[0]);
+        expect(progressMsgs.some((m) => m.type === 'zip:progress' && m.buildId === 'b-1' && m.phase === 'fetch')).toBe(true);
+        expect(progressMsgs.some((m) => m.type === 'zip:done' && m.buildId === 'b-1' && m.downloaded === 'zip')).toBe(true);
+    });
+
+    it('falls back to a markdown download when nothing bundles', async () => {
+        global.fetch = vi.fn(async () => { throw new Error('down'); }) as unknown as typeof fetch;
+        await import('../src/background');
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                {
+                    action: 'build_zip',
+                    buildId: 'b-2',
+                    payload: { markdown: '![a](https://e.com/a.png)', title: 'page', sourceUrl: null },
+                },
+                {},
+                resolve,
+            );
+        });
+        const response = await responsePromise;
+        expect(response).toMatchObject({ success: true, downloaded: 'md', filename: 'page.md' });
+        const [args] = downloadsDownload.mock.calls[0] as [{ url: string; filename: string }];
+        expect(args.filename).toBe('page.md');
+        expect(args.url.startsWith('data:text/markdown;base64,')).toBe(true);
+    });
+
+    it('broadcasts zip:error and clears state when the download fails', async () => {
+        downloadsDownload.mockRejectedValue(new Error('shelf full'));
+        await import('../src/background');
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                {
+                    action: 'build_zip',
+                    buildId: 'b-4',
+                    payload: { markdown: '![a](https://e.com/a.png)', title: 'page', sourceUrl: null },
+                },
+                {},
+                resolve,
+            );
+        });
+        const response = await responsePromise;
+        expect(response).toMatchObject({ success: false });
+        expect(sessionData.activeZipBuild).toBeUndefined();
+        const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]);
+        expect(errorMsgs.some((m) => m.type === 'zip:error' && m.buildId === 'b-4')).toBe(true);
+    });
+
+    it('includes the source page URL in the zip README (decoded from the data URL)', async () => {
+        await import('../src/background');
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                {
+                    action: 'build_zip',
+                    buildId: 'b-5',
+                    payload: {
+                        markdown: 'Intro\n\n![Hero](https://e.com/hero.png)',
+                        title: 'page',
+                        sourceUrl: 'https://e.com',
+                    },
+                },
+                {},
+                resolve,
+            );
+        });
+        await responsePromise;
+        const [args] = downloadsDownload.mock.calls[0] as [{ url: string; filename: string }];
+        const base64 = args.url.split(',')[1];
+        const bytes = new Uint8Array(Buffer.from(base64, 'base64'));
+        const files = unzipSync(bytes);
+        const readme = strFromU8(files['README.md']);
+        expect(readme).toContain('https://e.com');
+        expect(strFromU8(files['page.md'])).toContain('![Hero](images/img-001.png)');
+    });
+
+    it('zip:status reports the live build and clears stale state', async () => {
+        await import('../src/background');
+        sessionData.activeZipBuild = { buildId: 'b-live', phase: 'fetch', fetched: 3, total: 10, startedAt: 1 };
+        const statusPromise = new Promise((resolve) => {
+            messageListener!({ action: 'zip:status', buildId: 'b-live' }, {}, resolve);
+        });
+        const status = await statusPromise;
+        expect(status).toMatchObject({ active: true, buildId: 'b-live', fetched: 3, total: 10 });
+
+        const stalePromise = new Promise((resolve) => {
+            messageListener!({ action: 'zip:status', buildId: 'b-gone' }, {}, resolve);
+        });
+        const stale = await stalePromise;
+        expect(stale).toMatchObject({ active: false });
+        expect(sessionData.activeZipBuild).toBeUndefined(); // stale state cleared
     });
 });

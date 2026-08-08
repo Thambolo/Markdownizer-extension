@@ -15,6 +15,21 @@ interface ConvertSkeletonRequest {
     };
 }
 
+interface BuildZipRequest {
+    action: 'build_zip';
+    buildId: string;
+    payload: {
+        markdown: string;
+        title: string;
+        sourceUrl: string | null;
+    };
+}
+
+interface ZipStatusRequest {
+    action: 'zip:status';
+    buildId: string;
+}
+
 interface ConversionResponse {
     markdown_skeleton: string;
 }
@@ -33,10 +48,20 @@ interface ReadCodeMirrorCaptureRequest {
 // ── Message routing ──────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((
-    request: ConvertSkeletonRequest | ReadCodeMirrorCaptureRequest,
+    request: ConvertSkeletonRequest | ReadCodeMirrorCaptureRequest | BuildZipRequest | ZipStatusRequest,
     sender,
     sendResponse: (response: unknown) => void,
 ) => {
+    if (request.action === 'build_zip') {
+        handleBuildZip(request as BuildZipRequest, sendResponse);
+        return true;
+    }
+
+    if (request.action === 'zip:status') {
+        handleZipStatus(request as ZipStatusRequest, sendResponse);
+        return true;
+    }
+
     if (request.action === 'read_codemirror_capture') {
         handleReadCodeMirrorCapture(sender, sendResponse);
         return true;
@@ -101,4 +126,76 @@ async function convertSkeleton(payload: ConvertSkeletonRequest["payload"]): Prom
     }
 
     return response.json();
+}
+
+async function handleBuildZip(request: BuildZipRequest, sendResponse: (response: unknown) => void): Promise<void> {
+    const { buildId, payload } = request;
+    const broadcast = (message: Record<string, unknown>): void => {
+        chrome.runtime.sendMessage(message).catch(() => {});
+    };
+    const writeState = (state: Record<string, unknown>): void => {
+        chrome.storage.session.set({ activeZipBuild: { buildId, startedAt: Date.now(), ...state } }).catch(() => {});
+    };
+    const clearState = (): void => {
+        chrome.storage.session.remove('activeZipBuild').catch(() => {});
+    };
+
+    try {
+        // Dynamic import: the remark/fflate chunk loads only when a zip is
+        // actually built, keeping the convert_skeleton cold path light.
+        const { buildAndDownloadZip } = await import('./zip-build-service');
+        const result = await buildAndDownloadZip(payload.markdown, payload.title, payload.sourceUrl, {
+            onProgress: (p) => {
+                if (p.phase === 'fetch') {
+                    writeState({ phase: 'fetch', fetched: p.fetched, total: p.total });
+                    broadcast({ type: 'zip:progress', buildId, phase: 'fetch', fetched: p.fetched, total: p.total });
+                } else {
+                    writeState({ phase: 'build', fetched: 0, total: 0 });
+                    broadcast({ type: 'zip:progress', buildId, phase: 'build' });
+                }
+            },
+            download: async (dataUrl, filename) => {
+                // URL.createObjectURL is not available in service workers;
+                // data: URLs are the download mechanism.
+                await chrome.downloads.download({ url: dataUrl, filename });
+            },
+        });
+        await clearState();
+        broadcast({
+            type: 'zip:done',
+            buildId,
+            downloaded: result.downloaded,
+            totalImages: result.totalImages,
+            bundledImages: result.bundledImages,
+            skippedImages: result.skippedImages,
+            filename: result.filename,
+        });
+        sendResponse({ success: true, ...result });
+    } catch (err) {
+        await clearState();
+        const message = err instanceof Error ? err.message : 'Could not build the download.';
+        broadcast({ type: 'zip:error', buildId, error: message });
+        sendResponse({ success: false, error: message });
+    }
+}
+
+async function handleZipStatus(request: ZipStatusRequest, sendResponse: (response: unknown) => void): Promise<void> {
+    const stored = await chrome.storage.session.get('activeZipBuild');
+    const state = stored.activeZipBuild as
+        | { buildId?: string; phase?: string; fetched?: number; total?: number }
+        | undefined;
+    if (state && state.buildId === request.buildId) {
+        sendResponse({
+            active: true,
+            buildId: state.buildId,
+            phase: state.phase === 'build' ? 'build' : 'fetch',
+            fetched: state.fetched ?? 0,
+            total: state.total ?? 0,
+        });
+        return;
+    }
+    if (state) {
+        await chrome.storage.session.remove('activeZipBuild').catch(() => {});
+    }
+    sendResponse({ active: false });
 }

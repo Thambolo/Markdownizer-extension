@@ -46,7 +46,8 @@ export default defineManifest(async (env) => {
     permissions: [
       "activeTab",
       "scripting",
-      "storage"
+      "storage",
+      "downloads"
     ],
     host_permissions: [
       getApiMatchPattern(loadedEnv)
