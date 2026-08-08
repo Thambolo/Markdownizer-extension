@@ -292,7 +292,7 @@ export async function buildZipBlob(
         };
     }
 
-    const mapping = assignLocalPaths(uniqueUrls);
+    const mapping = assignLocalPaths(Array.from(bundled.keys()));
     const rewritten = rewriteImageReferences(markdown, mapping);
     const markdownFilename = `${title}.md`;
     const images: BundledImage[] = Array.from(bundled.entries()).map(([url, bytes]) => ({

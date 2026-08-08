@@ -272,4 +272,24 @@ describe('buildZipBlob', () => {
         expect(globalThis.fetch).toHaveBeenCalledTimes(1);
         expect(Object.keys(zip).some((k) => k.startsWith('images/'))).toBe(true);
     });
+
+    it('keeps original URLs for images that failed to fetch', async () => {
+        globalThis.fetch = vi.fn(async (url: string) =>
+            url.includes('ok') ? new Response(new Uint8Array([1])) : Promise.reject(new Error('x')),
+        ) as unknown as typeof fetch;
+        const result = await buildZipBlob('![Ok](https://e.com/ok.png)\n\n![Bad](https://e.com/bad.png)', 'page', null);
+        expect(result.blob).not.toBeNull();
+        expect(result.bundledImages).toBe(1);
+        expect(result.skippedImages).toBe(1);
+        const zip = unzipSync(new Uint8Array(await result.blob!.arrayBuffer()));
+        const md = strFromU8(zip['page.md']);
+        // Fetched image is rewritten to its local path.
+        expect(md).toContain('![Ok](images/img-001.png)');
+        // Failed image keeps its original URL - no dangling local path.
+        expect(md).toContain('![Bad](https://e.com/bad.png)');
+        expect(md).not.toContain('images/img-002.png');
+        // Exactly one image entry in the archive: the one that fetched.
+        const imageEntries = Object.keys(zip).filter((k) => k.startsWith('images/'));
+        expect(imageEntries).toHaveLength(1);
+    });
 });
