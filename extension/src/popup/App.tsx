@@ -42,6 +42,7 @@ export function App() {
   const [permissionWarning, setPermissionWarning] = useState('');
   const [imagesNote, setImagesNote] = useState('');
   const includeImagesRef = useRef(false);
+  const tabUrlRef = useRef<string | null>(null);
 
   const sessionRef = useRef<PreviewSession | null>(null);
 
@@ -177,7 +178,7 @@ export function App() {
     const newMode: CaptureMode = newValue ? 'full-page' : 'smart';
     setCaptureMode(newMode);
     captureModeRef.current = newMode;
-    
+
     // If preview is enabled and session exists, show with new mode immediately
     if (previewEnabled && sessionRef.current) {
         sessionRef.current.show(newMode);
@@ -194,7 +195,9 @@ export function App() {
     const next = setIframePreference(iframeOptionRef.current, target.checked ? 'include' : 'exclude');
     iframeOptionRef.current = next;
     setIframeOption(next);
-    if (previewEnabledRef.current && sessionRef.current) {
+    // The session stays open for eligibility even when visual preview is
+    // disabled, so re-inspection must not be gated on preview being enabled.
+    if (sessionRef.current) {
       sessionRef.current.setIncludeIframes(isIframeIncluded(next));
       inspectionGenerationRef.current = 0;
       requestIframeInspection(sessionRef.current, captureModeRef.current);
@@ -202,9 +205,15 @@ export function App() {
   };
 
   const ensureImagePermission = async (): Promise<boolean> => {
-    const origins = ['<all_urls>'];
-    if (await chrome.permissions.contains({ origins })) return true;
-    return await chrome.permissions.request({ origins });
+    try {
+      const origins = ['<all_urls>'];
+      if (await chrome.permissions.contains({ origins })) return true;
+      return await chrome.permissions.request({ origins });
+    } catch {
+      // Any permissions API failure is treated as denial; the caller's denial
+      // path reverts the toggle and explains the requirement.
+      return false;
+    }
   };
 
   const toggleIncludeImages = async (e: Event) => {
@@ -235,7 +244,7 @@ export function App() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    
+
     setDownloaded(true);
     setTimeout(() => setDownloaded(false), 2000);
   };
@@ -315,6 +324,7 @@ export function App() {
           sessionRef.current.setReady();
         }
         const safeTitle = sanitizeTitle(tab.title);
+        tabUrlRef.current = tab.url ?? null;
         setMarkdown(response.markdown);
         setFilename(safeTitle);
         setStatus('success');
@@ -347,35 +357,35 @@ export function App() {
 
     return (
       <div class="w-[320px] min-h-[400px] flex flex-col bg-slate-950 text-slate-100 font-['Inter'] selection:bg-indigo-500/30">
-        
+
         <Header openSettings={openSettings} />
 
         {/* Main Content */}
         <main class="flex-1 flex flex-col p-6 items-center justify-center gap-6 relative">
 
             <StatusOrb status={status} handleConvert={handleConvert} />
-        
+
             <StatusMessage status={status} markdownLength={markdown.length} error={error} warning={previewWarning || permissionWarning} note={imagesNote} />
 
             {/* Success Actions (Only visible on Success) */}
             {status === 'success' && (
-                <ActionButtons 
-                    copied={copied} 
+                <ActionButtons
+                    copied={copied}
                     downloaded={downloaded}
                     includeImages={includeImagesRef.current}
-                    handleCopy={handleCopy} 
-                    handleDownload={() => downloadFile(markdown, filename)} 
-                    handleDownloadZip={() => downloadWithImages(markdown, filename)} 
+                    handleCopy={handleCopy}
+                    handleDownload={() => { setImagesNote(''); downloadFile(markdown, filename); }}
+                    handleDownloadZip={() => downloadWithImages(markdown, filename, tabUrlRef.current ?? undefined)}
                 />
             )}
 
         </main>
 
-        <Footer 
-          autoDownload={autoDownload} 
-          toggleAutoDownload={toggleAutoDownload} 
-          previewEnabled={previewEnabled} 
-          togglePreview={togglePreview} 
+        <Footer
+          autoDownload={autoDownload}
+          toggleAutoDownload={toggleAutoDownload}
+          previewEnabled={previewEnabled}
+          togglePreview={togglePreview}
           captureFullPage={captureMode === 'full-page'}
           toggleCaptureFullPage={toggleCaptureFullPage}
           iframeEligible={iframeOption.eligible}
@@ -411,7 +421,7 @@ async function ensureContentScriptLoaded(tabId: number, captureMode: CaptureMode
                 lastError = err;
             }
         }
-        
+
         throw lastError || new Error("Failed to establish connection to content script");
     }
 }

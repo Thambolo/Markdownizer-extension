@@ -1,6 +1,17 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { PREVIEW_PORT_NAME, type CaptureMode, type PreviewEligibilityMessage } from '../src/preview-protocol';
+import { unzipSync, strFromU8 } from 'fflate';
+
+/** jsdom Blobs lack arrayBuffer(); read the bytes via FileReader instead. */
+function readBlobBytes(blob: Blob): Promise<Uint8Array> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
+        reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'));
+        reader.readAsArrayBuffer(blob);
+    });
+}
 
 // ── Chrome API Mocks ──────────────────────────────────────────────────────────
 
@@ -1898,6 +1909,57 @@ describe('Include images toggle', () => {
             .filter((m) => m.type === 'preview:inspect');
         expect(inspects.length).toBeGreaterThanOrEqual(2);
     });
+
+    it('re-inspects iframe eligibility when preview is disabled', async () => {
+        chrome.storage.local.get.mockResolvedValue({ capturePreviewEnabled: false });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+        const port = lastPort!;
+        const inspect = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((m) => m.type === 'preview:inspect');
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: inspect!.sessionId,
+            captureMode: 'smart',
+            generation: inspect!.generation,
+            hasEligibleIframes: true,
+            hasImages: true,
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        const iframeToggle = document.querySelector('#include-iframes-toggle') as HTMLInputElement;
+        expect(iframeToggle).not.toBeNull();
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(iframeToggle, false);
+            iframeToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        const inspects = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string })
+            .filter((m) => m.type === 'preview:inspect');
+        expect(inspects.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('treats permission API rejection as denial', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        chrome.permissions.contains.mockResolvedValue(false);
+        chrome.permissions.request.mockRejectedValue(new Error('api'));
+        await renderApp();
+        emitEligibility(true);
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        const toggle = document.querySelector('#include-images-toggle') as HTMLInputElement;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(toggle, true);
+            toggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(toggle.checked).toBe(false);
+        expect(document.body.textContent).toContain('site access permission');
+        expect(chrome.storage.local.set).not.toHaveBeenCalledWith(expect.objectContaining({ includeImages: true }));
+    });
 });
 
 // ── Zip Download Flow ────────────────────────────────────────────────────────
@@ -2025,6 +2087,91 @@ describe('Zip download flow', () => {
 
         expect(globalThis.fetch).toHaveBeenCalledTimes(1);
         expect(createObjectURL).toHaveBeenCalled();
+    });
+
+    it('manual zip download includes the source page URL in the README', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true });
+        chrome.tabs.sendMessage.mockResolvedValue({
+            success: true,
+            markdown: '![Hero](https://e.com/hero.png)',
+        });
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))));
+        let capturedBlob: Blob | null = null;
+        const createObjectURL = vi.fn((blob: Blob) => { capturedBlob = blob; return 'blob:mock'; });
+        const revokeObjectURL = vi.fn();
+        vi.stubGlobal('URL', new Proxy(URL, {
+            get: (target, prop, receiver) => {
+                if (prop === 'createObjectURL') return createObjectURL;
+                if (prop === 'revokeObjectURL') return revokeObjectURL;
+                return Reflect.get(target, prop, receiver);
+            },
+        }));
+
+        await renderApp();
+        emitEligibility();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const zipButton = buttons.find((b) => b.textContent?.includes('.md + images')) as HTMLButtonElement;
+        expect(zipButton).not.toBeUndefined();
+        await act(async () => { zipButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        // The blob handed to createObjectURL is the zip archive; its README must
+        // carry the source page URL (the converted tab is https://example.com).
+        expect(capturedBlob).not.toBeNull();
+        // jsdom Blobs lack arrayBuffer(); read the zip bytes via FileReader.
+        const zip = unzipSync(await readBlobBytes(capturedBlob!));
+        const readme = strFromU8(zip['README.md']);
+        expect(readme).toContain('https://example.com');
+    });
+
+    it('left half clears the image note after a zip download', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true });
+        chrome.tabs.sendMessage.mockResolvedValue({
+            success: true,
+            markdown: '![Hero](https://e.com/hero.png)',
+        });
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))));
+        const createObjectURL = vi.fn(() => 'blob:mock');
+        const revokeObjectURL = vi.fn();
+        vi.stubGlobal('URL', new Proxy(URL, {
+            get: (target, prop, receiver) => {
+                if (prop === 'createObjectURL') return createObjectURL;
+                if (prop === 'revokeObjectURL') return revokeObjectURL;
+                return Reflect.get(target, prop, receiver);
+            },
+        }));
+
+        await renderApp();
+        emitEligibility();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const zipButton = buttons.find((b) => b.textContent?.includes('.md + images')) as HTMLButtonElement;
+        await act(async () => { zipButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        // Zip download leaves the image note displayed
+        expect(document.body.textContent).toContain('Included 1 images');
+
+        // The left half (.md) download must clear the stale note
+        const mdButton = buttons.find(
+            (b) => b.textContent?.includes('.md') && !b.textContent?.includes('images'),
+        ) as HTMLButtonElement;
+        expect(mdButton).not.toBeUndefined();
+        await act(async () => { mdButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        expect(document.body.textContent).not.toContain('Included 1 images');
     });
 
     it('auto-downloads the zip when both toggles are on', async () => {
