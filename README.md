@@ -26,7 +26,7 @@ Most web clippers process readable content on third-party servers. Markdownizer 
 *   **Capture Preview**: Highlights visible text, images, and interactive controls expected in conversion, so you can verify what will be captured before committing.
 *   **Capture Full Page**: Temporarily previews and converts the entire visible body when Smart selection is too narrow. The setting resets to Smart selection each time the popup reopens. If the full page exceeds the skeleton size limit, the extension asks you to return to Smart selection.
 *   **Include Images (ZIP Download)**: Toggle image inclusion in the popup to bundle the page's images with your Markdown. The first time you enable it, the extension asks for a one-time optional `<all_urls>` permission; downloads arrive as a ZIP containing the `.md` file, a `README.md`, and the images in an `images/` folder. Image bundling is fully local — no images leave your device.
-*   **Background ZIP Downloads with Progress**: ZIP bundles (`.md` + `README.md` + `images/`) are built in the background service worker — the download continues even if the popup closes, with progress shown in the popup (restored on reopen).
+*   **Background ZIP Downloads with Progress**: ZIP bundles (`.md` + `README.md` + `images/`) are built in a hidden offscreen document (invisible to the user) — the download continues even if the popup closes, with progress shown in the popup (restored on reopen).
 
 ## Installation
 
@@ -82,6 +82,7 @@ Markdownizer follows the Principle of Least Privilege:
 *   `scripting`: Required to execute the extraction engine within the page context.
 *   `storage`: Required to persist user preferences (auto-download settings and capture preview toggle) and to keep the zip-download progress available across popup opens (`storage.session`).
 *   `downloads`: Required to trigger the ZIP / Markdown download from the background service worker, so downloads continue even if the popup is closed.
+*   `offscreen`: Required to build ZIP downloads in a hidden background document (the MV3 service worker cannot use dynamic imports), so downloads continue even if the popup is closed.
 
 ## License
 
