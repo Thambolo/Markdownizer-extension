@@ -5,28 +5,27 @@ Turn any webpage into clean Markdown for your preferred LLM.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)]()
 
-Markdownizer is a browser extension for people who want to turn the current page into clean Markdown and feed it into their preferred LLM. The clearest use case is grabbing an assignment brief, documentation page, article, or research page and turning it into context that is easier to paste into ChatGPT, Claude, Gemini, or another LLM.
+Markdownizer turns the current page into clean, structured Markdown — docs, articles, and assignment briefs become high-quality context for ChatGPT, Claude, Gemini, or any LLM in one click.
 
 Landing page: [markdownizer.thambolo.com](https://markdownizer.thambolo.com/)
 
-## Core Philosophy: Privacy by Design
+## Privacy by Design
 
-Most web clippers process readable content on third-party servers. Markdownizer uses a **Client-Heavy Skeletonization** architecture so readable page text is tokenized locally before conversion.
+Readable page text never leaves your browser:
 
-1.  **Local Skeletonization**: The extension extracts the HTML structure locally and replaces all text content with anonymous tokens (e.g., `{{MDZ0}}`).
-2.  **Structural Conversion**: The extension sends a structural skeleton to the API for conversion. The backend receives structure and metadata needed for conversion, but not the readable page text body.
-3.  **Local Rehydration**: The processed Markdown structure is returned, and the extension injects your original text back into the document locally.
+1. **Local skeletonization** — text is replaced with anonymous tokens before anything is sent.
+2. **Structural conversion** — only the page's structure is sent to the server for Markdown conversion.
+3. **Local rehydration** — your text is restored locally.
 
 ## Features
 
 *   **One-Click Conversion**: Transform the active tab into Markdown instantly.
-*   **LLM-Ready Output**: Produces cleaner context than raw HTML, messy copy-paste, or sending only the URL.
-*   **Smart Extraction**: Prioritizes main content and handles complex code blocks using an integrated `readability.js` engine.
-*   **Structure Preservation**: Keeps useful headings, lists, tables, and code blocks readable.
-*   **Capture Preview**: Highlights visible text, images, and interactive controls expected in conversion, so you can verify what will be captured before committing.
-*   **Capture Full Page**: Temporarily previews and converts the entire visible body when Smart selection is too narrow. The setting resets to Smart selection each time the popup reopens. If the full page exceeds the skeleton size limit, the extension asks you to return to Smart selection.
-*   **Download Images (ZIP Download)**: Toggle in the popup to convert the page AND auto-download it with the page's images as a ZIP — one click on the convert button produces the bundle. The first time you enable it, the extension asks for a one-time optional `<all_urls>` permission; downloads arrive as a ZIP containing the `.md` file, a `README.md`, and the images in an `images/` folder. The manual copy and download buttons remain available. Image bundling is fully local — no images leave your device.
-*   **Background ZIP Downloads with Progress**: ZIP bundles (`.md` + `README.md` + `images/`) are built in a hidden offscreen document (invisible to the user) — the download continues even if the popup closes, with progress shown in the popup (restored on reopen).
+*   **LLM-Ready Output**: Cleaner context than raw HTML, messy copy-paste, or a bare URL.
+*   **Smart Extraction**: Prioritizes main content and handles complex code blocks with an integrated readability engine.
+*   **Structure Preservation**: Headings, lists, tables, and code blocks stay readable.
+*   **Capture Preview**: Highlights what will be captured, so you can verify before converting.
+*   **Capture Full Page**: Converts the entire page when Smart selection is too narrow.
+*   **Download Images (ZIP Bundle)**: One click converts the page and downloads it with its images as a ZIP — built locally with live progress, so the download finishes even if you close the popup.
 
 ## Installation
 
@@ -53,6 +52,16 @@ Most web clippers process readable content on third-party servers. Markdownizer 
 4.  Use the **Copy** or **Download** buttons to retrieve your Markdown.
 5.  Paste the result into your preferred LLM.
 
+## Permissions Explained
+
+Markdownizer follows the Principle of Least Privilege:
+*   `activeTab`: Capture the structure of the current page.
+*   `scripting`: Run the extraction engine in the page.
+*   `storage`: Persist your preferences.
+*   `downloads`: Save the `.md` and ZIP downloads.
+*   `offscreen`: Assemble ZIP bundles in the background.
+*   `all_urls` (optional): Requested once, only when you enable Download images, to fetch the page's images.
+
 ## Development Setup
 
 Built with **Vite**, **Preact**, **TypeScript**, and **Tailwind CSS**.
@@ -74,15 +83,6 @@ To build the extension for a specific API endpoint:
 ```bash
 VITE_API_URL=https://api.yourdomain.com npm run build
 ```
-
-## Permissions Explained
-
-Markdownizer follows the Principle of Least Privilege:
-*   `activeTab`: Required to capture the structure of the currently focused page.
-*   `scripting`: Required to execute the extraction engine within the page context.
-*   `storage`: Required to persist user preferences (auto-download settings and capture preview toggle) and to keep the zip-download progress available across popup opens (`storage.session`).
-*   `downloads`: Required to trigger the ZIP / Markdown download from the background service worker, so downloads continue even if the popup is closed.
-*   `offscreen`: Required to build ZIP downloads in a hidden background document (the MV3 service worker cannot use dynamic imports), so downloads continue even if the popup is closed.
 
 ## License
 
