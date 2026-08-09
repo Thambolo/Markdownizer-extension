@@ -57,13 +57,22 @@ describe('offscreen document handler', () => {
         expect(savePayload).toHaveBeenCalledWith('b-1', expect.any(Uint8Array));
         const broadcasts = sendMessageSpy.mock.calls.map((c) => c[0]);
         expect(broadcasts.some((m) => m.type === 'zip:progress' && m.buildId === 'b-1')).toBe(true);
-        expect(broadcasts.some((m) => m.type === 'zip:completed' && m.buildId === 'b-1' && m.ok === true)).toBe(true);
+        // The completion broadcast carries the image counts — the SW-recovery
+        // data for the popup's "Included N of M images" note.
+        expect(
+            broadcasts.some(
+                (m) => m.type === 'zip:completed' && m.buildId === 'b-1' && m.ok === true &&
+                    m.bundledImages === 1 && m.skippedImages === 0 && m.totalImages === 1,
+            ),
+        ).toBe(true);
     });
 
     it('responds { ok: false } and broadcasts completion on build errors', async () => {
-        globalThis.fetch = vi.fn(async () => { throw new Error('boom'); }) as unknown as typeof fetch;
         await load();
         const { savePayload } = await import('../src/idb-payload');
+        // The deterministic error mechanism: the payload store rejects. (A
+        // throwing fetch would NOT error the build — fetchImageBytes converts
+        // fetch failures into skipped images.)
         (savePayload as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('idb full'));
         const responsePromise = new Promise((resolve) => {
             messageListener!(
@@ -74,7 +83,7 @@ describe('offscreen document handler', () => {
         });
         const response = (await responsePromise) as { ok: boolean; error?: string };
         expect(response.ok).toBe(false);
-        expect(response.error).toBeTruthy();
+        expect(response.error).toBe('idb full');
         const broadcasts = sendMessageSpy.mock.calls.map((c) => c[0]);
         expect(broadcasts.some((m) => m.type === 'zip:completed' && m.buildId === 'b-2' && m.ok === false)).toBe(true);
     });
