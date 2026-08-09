@@ -4,13 +4,16 @@ export interface ToggleProps {
     checked: boolean;
     onChange: (event: Event) => void;
     description?: string;
+    disabled?: boolean;
 }
 
-export function Toggle({ id, label, checked, onChange, description }: ToggleProps): JSX.Element {
+export function Toggle({ id, label, checked, onChange, description, disabled }: ToggleProps): JSX.Element {
     return (
         <label
             htmlFor={id}
-            class="flex w-full items-center justify-between gap-4 cursor-pointer"
+            class={`flex w-full items-center justify-between gap-4 ${
+                disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+            }`}
         >
             <span class="text-left">
                 <span class="block text-xs text-slate-400 hover:text-slate-300 transition-colors">{label}</span>
@@ -22,6 +25,7 @@ export function Toggle({ id, label, checked, onChange, description }: ToggleProp
                     type="checkbox"
                     checked={checked}
                     onChange={onChange}
+                    disabled={disabled}
                     class="peer sr-only"
                 />
                 <span

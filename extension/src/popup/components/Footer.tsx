@@ -65,6 +65,7 @@ export function Footer({
           label="Auto-download on success"
           checked={autoDownload}
           onChange={toggleAutoDownload}
+          disabled={includeImages}
         />
       </div>
     </footer>

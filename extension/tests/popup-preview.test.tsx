@@ -2068,6 +2068,80 @@ describe('Download images toggle', () => {
         expect(document.body.textContent).toContain('site access permission');
         expect(chrome.storage.local.set).not.toHaveBeenCalledWith(expect.objectContaining({ includeImages: true }));
     });
+
+    it('disables the auto-download toggle while Download images is ON', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true, autoDownload: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+        emitEligibility(true);
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const autoDownloadToggle = document.querySelector('#auto-download-toggle') as HTMLInputElement;
+        expect(autoDownloadToggle).not.toBeNull();
+        expect(autoDownloadToggle.disabled).toBe(true);
+        expect(autoDownloadToggle.checked).toBe(true);
+        const label = document.querySelector('label[for="auto-download-toggle"]') as HTMLElement;
+        expect(label.className).toContain('cursor-not-allowed');
+        expect(label.className).toContain('opacity-60');
+        expect(label.className).not.toContain('cursor-pointer');
+    });
+
+    it('keeps the auto-download value while Download images toggles', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+        emitEligibility(true);
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        // Turn Auto-download ON (this legitimately persists { autoDownload: true } once)
+        const autoDownloadToggle = document.querySelector('#auto-download-toggle') as HTMLInputElement;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(autoDownloadToggle, true);
+            autoDownloadToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(autoDownloadToggle.checked).toBe(true);
+
+        // Download images ON → auto-download stays checked but disabled
+        const imagesToggle = document.querySelector('#include-images-toggle') as HTMLInputElement;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(imagesToggle, true);
+            imagesToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(autoDownloadToggle.checked).toBe(true);
+        expect(autoDownloadToggle.disabled).toBe(true);
+
+        // Download images OFF → auto-download re-enabled, value intact
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')!.set!;
+            setter.call(imagesToggle, false);
+            imagesToggle.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(autoDownloadToggle.checked).toBe(true);
+        expect(autoDownloadToggle.disabled).toBe(false);
+
+        // Only the initial click persisted autoDownload (include-images clicks must not)
+        const autoDownloadWrites = chrome.storage.local.set.mock.calls
+            .filter((call: unknown[]) => call[0] && 'autoDownload' in (call[0] as Record<string, unknown>));
+        expect(autoDownloadWrites).toHaveLength(1);
+    });
+
+    it('keeps the auto-download toggle disabled when Download images is ON but the page has no images', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        // No eligibility emitted: include-images toggle hidden, auto-download still disabled
+        expect(document.querySelector('#include-images-toggle')).toBeNull();
+        const autoDownloadToggle = document.querySelector('#auto-download-toggle') as HTMLInputElement;
+        expect(autoDownloadToggle).not.toBeNull();
+        expect(autoDownloadToggle.disabled).toBe(true);
+    });
 });
 
 // ── Zip Download Flow ────────────────────────────────────────────────────────
