@@ -54,8 +54,8 @@ export function Footer({
         {imagesEligible && (
           <Toggle
             id="include-images-toggle"
-            label="Include images"
-            description="Bundles page images with the Markdown file (ZIP)"
+            label="Download images"
+            description="Converts and auto-downloads the page with its images as a ZIP"
             checked={includeImages}
             onChange={toggleIncludeImages}
           />

@@ -427,12 +427,14 @@ export function App() {
         setFilename(safeTitle);
         setStatus('success');
 
-        if (autoDownload) {
-            if (includeImagesRef.current) {
-                downloadWithImages(response.markdown, safeTitle, tab.url);
-            } else {
-                downloadFile(response.markdown, safeTitle);
-            }
+        // "Download images" ON: converting also bundles the page images and
+        // auto-downloads the ZIP (the toggle alone triggers it, regardless of
+        // the auto-download setting). Toggle OFF: auto-download keeps gating
+        // the plain .md path.
+        if (includeImagesRef.current) {
+            downloadWithImages(response.markdown, safeTitle, tab.url);
+        } else if (autoDownload) {
+            downloadFile(response.markdown, safeTitle);
         }
       } else {
         throw new Error(response.error || "Unknown error occurred");
