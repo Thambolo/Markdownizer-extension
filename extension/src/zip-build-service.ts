@@ -1,69 +1,53 @@
-// zip-build-service.ts - Service-worker orchestration for the ZIP bundle.
-// No `chrome.*` references: the downloader and progress callbacks are injected
-// so this module is unit-testable with plain mocks.
+// zip-build-service.ts - ZIP bundle construction. No chrome API references:
+// this module runs inside the hidden offscreen document, which only has the
+// runtime extension API. The produced bytes are stored via the caller
+// (IndexedDB); the service worker performs the actual download.
 
 import { buildZipBlob, type ZipBuildProgress } from './popup/zip-download';
+import { bytesToDataUrl } from './base64';
 
-export interface ZipDownloadResult {
+export { bytesToDataUrl };
+
+export interface ZipBuildResult {
     downloaded: 'zip' | 'md';
     filename: string;
     totalImages: number;
     bundledImages: number;
     skippedImages: number;
-}
-
-export interface ZipBuildCallbacks {
-    onProgress?: (p: ZipBuildProgress) => void;
-    download: (dataUrl: string, filename: string) => Promise<void>;
+    bytes: Uint8Array;
 }
 
 /**
- * Build the bundle and hand the result to the injected downloader.
- * Returns the plain .md result when nothing bundlable (no images, or none
- * fetchable) - the fallback lives here, not in the popup.
+ * Build the bundle and return the payload bytes plus metadata.
+ * Returns the plain .md bytes when nothing bundlable (no images, or none
+ * fetchable) - the fallback lives here, not in the caller.
  */
-export async function buildAndDownloadZip(
+export async function buildZipResult(
     markdown: string,
     title: string,
     sourceUrl: string | null,
-    callbacks: ZipBuildCallbacks,
-): Promise<ZipDownloadResult> {
-    const result = await buildZipBlob(markdown, title, sourceUrl, { onProgress: callbacks.onProgress });
+    options: { onProgress?: (p: ZipBuildProgress) => void } = {},
+): Promise<ZipBuildResult> {
+    const result = await buildZipBlob(markdown, title, sourceUrl, { onProgress: options.onProgress });
 
     if (result.blob) {
         const bytes = new Uint8Array(await result.blob.arrayBuffer());
-        await callbacks.download(bytesToDataUrl(bytes, 'application/zip'), `${title}.zip`);
         return {
             downloaded: 'zip',
             filename: `${title}.zip`,
             totalImages: result.totalImages,
             bundledImages: result.bundledImages,
             skippedImages: result.skippedImages,
+            bytes,
         };
     }
 
-    const mdBytes = new TextEncoder().encode(markdown);
-    await callbacks.download(bytesToDataUrl(mdBytes, 'text/markdown'), `${title}.md`);
     return {
         downloaded: 'md',
         filename: `${title}.md`,
         totalImages: result.totalImages,
         bundledImages: 0,
         skippedImages: result.skippedImages,
+        bytes: new TextEncoder().encode(markdown),
     };
-}
-
-/**
- * Encode bytes as a base64 data: URL. Chunked (32 KB) to avoid call-stack
- * limits on large payloads. `btoa` is available in service workers.
- * NOTE: URL.createObjectURL is NOT available in service workers, so data:
- * URLs are the download mechanism there.
- */
-export function bytesToDataUrl(bytes: Uint8Array, mime: string): string {
-    const CHUNK = 0x8000;
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-        binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
-    }
-    return `data:${mime};base64,${btoa(binary)}`;
 }
