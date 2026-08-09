@@ -73,7 +73,25 @@ if (existsSync(indexHtml) && readFileSync(indexHtml, 'utf8').includes('modulepre
   errors.push('index.html contains modulepreload links');
 }
 
-// 5. SW smoke test: evaluate the REAL built background chunk in a
+// 5. The offscreen document entry must exist in the build output. Assert
+//    stable string literals that survive minification ('offscreen:build' is
+//    the message type the module handles; 'zip-payloads' is the IndexedDB
+//    store name), NOT minified identifiers like buildZipResult.
+const offscreenHtml = join(distDir, 'offscreen.html');
+if (!existsSync(offscreenHtml)) errors.push('offscreen.html missing from dist');
+else {
+  const html = readFileSync(offscreenHtml, 'utf8');
+  const scriptMatch = html.match(/src="([^"]*offscreen[^"]*\.js)"/);
+  if (!scriptMatch) errors.push('offscreen.html has no bundled offscreen script');
+  else {
+    const chunkFile = scriptMatch[1].replace(/^\//, '');
+    const chunk = readFileSync(join(distDir, chunkFile), 'utf8');
+    if (!chunk.includes('offscreen:build')) errors.push(`offscreen chunk ${chunkFile} missing the build handler`);
+    if (!chunk.includes('zip-payloads')) errors.push(`offscreen chunk ${chunkFile} missing the payload store`);
+  }
+}
+
+// 6. SW smoke test: evaluate the REAL built background chunk in a
 //    worker-like environment (node has no document/window, exactly like an
 //    MV3 service worker) and dispatch build_zip end-to-end. Guards the
 //    module-evaluation failures of the remark stack (browser-condition

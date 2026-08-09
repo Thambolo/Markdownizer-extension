@@ -1,7 +1,10 @@
 import { defineConfig } from 'vite';
+import { fileURLToPath } from 'node:url';
 import preact from '@preact/preset-vite';
 import { crx } from '@crxjs/vite-plugin';
 import manifest from './manifest.config';
+
+const htmlEntry = (file) => fileURLToPath(new URL(file, import.meta.url));
 
 export default defineConfig({
   plugins: [
@@ -38,5 +41,11 @@ export default defineConfig({
     //   console warnings.
     // Dynamic imports still work via plain `import()`; chunks load on demand.
     modulePreload: false,
+    rollupOptions: {
+      input: {
+        index: htmlEntry('index.html'),
+        offscreen: htmlEntry('offscreen.html'),
+      },
+    },
   },
 });
