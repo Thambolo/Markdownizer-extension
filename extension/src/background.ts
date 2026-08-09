@@ -62,15 +62,15 @@ chrome.runtime.onMessage.addListener((
         }
         if (request.type === 'zip:progress' && typeof request.buildId === 'string') {
             const p = request as { phase?: string; fetched?: number; total?: number };
-            // Compare-and-write: only write when no build owns the state yet
-            // or this build still owns it, so a stale build's late progress
-            // tick never clobbers a newer build's state.
-            chrome.storage.session
-                .get('activeZipBuild')
-                .then((stored) => {
-                    const existing = (stored as { activeZipBuild?: { buildId?: string } }).activeZipBuild;
-                    if (existing && existing.buildId !== request.buildId) return;
-                    return chrome.storage.session.set({
+            // Compare-and-write INSIDE the serialized mutation queue: only
+            // write when no build owns the state yet or this build still
+            // owns it, so a stale build's late progress tick never clobbers
+            // a newer build's state (and the queue closes the read-check-
+            // write window storage.session cannot CAS).
+            void mutateZipBuild(async (current) => {
+                if (current && current.buildId !== request.buildId) return;
+                await chrome.storage.session
+                    .set({
                         activeZipBuild: {
                             buildId: request.buildId,
                             startedAt: Date.now(),
@@ -78,9 +78,9 @@ chrome.runtime.onMessage.addListener((
                             fetched: p.fetched ?? 0,
                             total: p.total ?? 0,
                         },
-                    });
-                })
-                .catch(() => {});
+                    })
+                    .catch(() => {});
+            });
             return false;
         }
         return;
@@ -182,6 +182,35 @@ let activeBuilds = 0;
  * with the dead instance's response path (storage guard). */
 const finalizations = new Map<string, Promise<'done' | 'failed'>>();
 
+interface ActiveZipBuildState {
+    buildId?: string;
+    phase?: string;
+    fetched?: number;
+    total?: number;
+    startedAt?: number;
+}
+
+let zipStateQueue: Promise<void> = Promise.resolve();
+
+/**
+ * Serialize every activeZipBuild read-check-write/remove through one queue:
+ * storage.session has no CAS, so without this a stale build's mutation can
+ * land between another build's read and write. Each op runs with the CURRENT
+ * stored state passed in; the queue is per worker instance (a restarted
+ * instance's recovery path reads fresh storage and cannot interleave).
+ */
+function mutateZipBuild(
+    op: (current: ActiveZipBuildState | undefined) => void | Promise<void>,
+): Promise<void> {
+    const next = zipStateQueue.then(async () => {
+        const stored = await chrome.storage.session.get('activeZipBuild').catch(() => ({}));
+        const current = (stored as { activeZipBuild?: ActiveZipBuildState }).activeZipBuild;
+        await op(current);
+    });
+    zipStateQueue = next.catch(() => {});
+    return next;
+}
+
 /** Serialize offscreen lifecycle operations: a pending close is always awaited
  * before the next create, so no close/create race is possible. */
 function enqueueLifecycle(op: () => Promise<void>): Promise<void> {
@@ -240,13 +269,14 @@ async function finalizeBuild(buildId: string, metadata: ZipDoneMetadata): Promis
     if (claimed) return await claimed;
 
     const promise = (async (): Promise<'done' | 'failed'> => {
-        // Compare-and-clear: remove the active state only when it still
-        // belongs to this build, so a newer build's state survives.
-        const stored = await chrome.storage.session.get('activeZipBuild').catch(() => ({}));
-        const state = (stored as { activeZipBuild?: { buildId?: string } }).activeZipBuild;
-        if (state?.buildId === buildId) {
-            await chrome.storage.session.remove('activeZipBuild').catch(() => {});
-        }
+        // Compare-and-clear INSIDE the serialized queue: remove the active
+        // state only when it still belongs to this build, so a newer
+        // build's state survives.
+        await mutateZipBuild(async (current) => {
+            if (current?.buildId === buildId) {
+                await chrome.storage.session.remove('activeZipBuild').catch(() => {});
+            }
+        });
         try {
             const bytes = await readPayload(buildId);
             const mime = metadata.downloaded === 'md' ? 'text/markdown' : 'application/zip';
@@ -279,11 +309,16 @@ async function handleBuildZip(request: BuildZipRequest, sendResponse: (response:
     const startedAt = Date.now();
     // Progress writes are monotonic fire-and-forget snapshots; the INITIAL
     // write is awaited below so a fast build cannot clear state before it
-    // lands (which would leave a stale activeZipBuild behind forever).
+    // lands (which would leave a stale activeZipBuild behind forever). The
+    // write runs INSIDE the serialized queue, still unconditionally — the
+    // "newest build claims state" transition, made atomic against every
+    // other activeZipBuild mutation.
     const writeState = (state: Record<string, unknown>): Promise<void> => {
-        return chrome.storage.session
-            .set({ activeZipBuild: { buildId, startedAt, ...state } })
-            .then(() => undefined, () => undefined);
+        return mutateZipBuild(() =>
+            chrome.storage.session
+                .set({ activeZipBuild: { buildId, startedAt, ...state } })
+                .catch(() => {}),
+        );
     };
 
     if (!chrome.offscreen?.createDocument) {
@@ -333,14 +368,15 @@ async function handleBuildZip(request: BuildZipRequest, sendResponse: (response:
             skippedImages: result.skippedImages,
         });
     } catch (err) {
-        // Compare-and-clear: remove the active state only when it still
-        // belongs to this build (mirrors finalizeBuild), so a newer build's
-        // in-progress state survives an older build's failure.
-        const stored = await chrome.storage.session.get('activeZipBuild').catch(() => ({}));
-        const state = (stored as { activeZipBuild?: { buildId?: string } }).activeZipBuild;
-        if (state?.buildId === buildId) {
-            await chrome.storage.session.remove('activeZipBuild').catch(() => {});
-        }
+        // Compare-and-clear INSIDE the serialized queue: remove the active
+        // state only when it still belongs to this build (mirrors
+        // finalizeBuild), so a newer build's in-progress state survives an
+        // older build's failure.
+        await mutateZipBuild(async (current) => {
+            if (current?.buildId === buildId) {
+                await chrome.storage.session.remove('activeZipBuild').catch(() => {});
+            }
+        });
         console.error('Markdownizer zip build failed:', err);
         const message = 'The download failed. Try again.';
         broadcast({ type: 'zip:error', buildId, error: message });
@@ -372,12 +408,18 @@ interface ZipCompletedMessage {
  * guard makes it idempotent across instances.
  */
 async function handleZipCompleted(message: ZipCompletedMessage): Promise<void> {
+    // Read-only early return (no mutation, so it stays outside the queue);
+    // every mutation below runs as a queued compare-and-clear.
     const stored = await chrome.storage.session.get('activeZipBuild').catch(() => ({}));
     const state = (stored as { activeZipBuild?: { buildId?: string } }).activeZipBuild;
     if (!state || state.buildId !== message.buildId) return;
 
     if (!message.ok) {
-        await chrome.storage.session.remove('activeZipBuild').catch(() => {});
+        await mutateZipBuild(async (current) => {
+            if (current?.buildId === message.buildId) {
+                await chrome.storage.session.remove('activeZipBuild').catch(() => {});
+            }
+        });
         broadcast({ type: 'zip:error', buildId: message.buildId, error: message.error ?? 'The download failed. Try again.' });
         // No response-path finally runs here (this branch handles the
         // SW-restart failure case), so close the document explicitly.
@@ -397,32 +439,33 @@ async function handleZipCompleted(message: ZipCompletedMessage): Promise<void> {
 }
 
 async function handleZipStatus(request: ZipStatusRequest, sendResponse: (response: unknown) => void): Promise<void> {
-    const stored = await chrome.storage.session.get('activeZipBuild');
-    const state = stored.activeZipBuild as
-        | { buildId?: string; phase?: string; fetched?: number; total?: number }
-        | undefined;
-    if (state && state.buildId === request.buildId) {
-        // Orphan check: if no offscreen document exists, the build cannot be
-        // running anymore — clear the stale state.
-        if (chrome.offscreen?.createDocument) {
-            const exists = await offscreenDocumentExists();
-            if (!exists) {
-                await chrome.storage.session.remove('activeZipBuild').catch(() => {});
-                sendResponse({ active: false });
-                return;
+    // The read-check-remove runs INSIDE the serialized queue so the orphan
+    // clear (and the mismatched-build clear below) cannot interleave with
+    // another build's claim.
+    await mutateZipBuild(async (state) => {
+        if (state && state.buildId === request.buildId) {
+            // Orphan check: if no offscreen document exists, the build cannot be
+            // running anymore — clear the stale state.
+            if (chrome.offscreen?.createDocument) {
+                const exists = await offscreenDocumentExists();
+                if (!exists) {
+                    await chrome.storage.session.remove('activeZipBuild').catch(() => {});
+                    sendResponse({ active: false });
+                    return;
+                }
             }
+            sendResponse({
+                active: true,
+                buildId: state.buildId,
+                phase: state.phase === 'build' ? 'build' : 'fetch',
+                fetched: state.fetched ?? 0,
+                total: state.total ?? 0,
+            });
+            return;
         }
-        sendResponse({
-            active: true,
-            buildId: state.buildId,
-            phase: state.phase === 'build' ? 'build' : 'fetch',
-            fetched: state.fetched ?? 0,
-            total: state.total ?? 0,
-        });
-        return;
-    }
-    if (state) {
-        await chrome.storage.session.remove('activeZipBuild').catch(() => {});
-    }
-    sendResponse({ active: false });
+        if (state) {
+            await chrome.storage.session.remove('activeZipBuild').catch(() => {});
+        }
+        sendResponse({ active: false });
+    });
 }

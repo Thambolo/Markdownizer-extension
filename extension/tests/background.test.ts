@@ -504,4 +504,78 @@ describe('Background offscreen zip build flow', () => {
         const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:error');
         expect(errorMsgs.some((m) => m.buildId === 'b-old')).toBe(true);
     });
+
+    it("stale progress enqueued before a new build claim still loses", async () => {
+        await import('../src/background');
+        // Hold the new build's offscreen round-trip open so its claim is
+        // still observable mid-flight (the queued ops below run first).
+        let releaseBuild: (r: unknown) => void = () => {};
+        chrome.runtime.sendMessage.mockImplementation((message: { type?: string; buildId?: string }) =>
+            message?.type === 'offscreen:build'
+                ? new Promise((resolve) => { releaseBuild = resolve; })
+                : Promise.resolve({ ok: true, buildId: message?.buildId, downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 }),
+        );
+        // The old build's late progress relay fires first (fire-and-forget)...
+        messageListener!({ type: 'zip:progress', buildId: 'b-old', phase: 'fetch', fetched: 9, total: 9 }, {}, vi.fn());
+        // ...and the new build's initial claim enqueues after it.
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                { action: 'build_zip', buildId: 'b-new', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
+                {},
+                resolve,
+            );
+        });
+        await new Promise((r) => setTimeout(r, 10)); // both queued mutations have run
+        expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'b-new' });
+        // A second stale tick still cannot clobber the newer claim.
+        messageListener!({ type: 'zip:progress', buildId: 'b-old', phase: 'fetch', fetched: 9, total: 9 }, {}, vi.fn());
+        await new Promise((r) => setTimeout(r, 0));
+        expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'b-new' });
+        releaseBuild({ ok: true, buildId: 'b-new', downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 });
+        await responsePromise;
+    });
+
+    it("new build claim enqueued before stale progress still wins", async () => {
+        await import('../src/background');
+        let releaseBuild: (r: unknown) => void = () => {};
+        chrome.runtime.sendMessage.mockImplementation((message: { type?: string; buildId?: string }) =>
+            message?.type === 'offscreen:build'
+                ? new Promise((resolve) => { releaseBuild = resolve; })
+                : Promise.resolve({ ok: true, buildId: message?.buildId, downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 }),
+        );
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                { action: 'build_zip', buildId: 'b-new', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
+                {},
+                resolve,
+            );
+        });
+        // Let the new build's initial claim enqueue (and run) first.
+        await new Promise((r) => setTimeout(r, 0));
+        // Stale progress from an older build enqueues after the claim.
+        messageListener!({ type: 'zip:progress', buildId: 'b-old', phase: 'fetch', fetched: 9, total: 9 }, {}, vi.fn());
+        await new Promise((r) => setTimeout(r, 0));
+        expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'b-new', phase: 'fetch', fetched: 0, total: 0 });
+        releaseBuild({ ok: true, buildId: 'b-new', downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 });
+        await responsePromise;
+    });
+
+    it("stale build failure cannot remove a newer claim", async () => {
+        await import('../src/background');
+        sessionData.activeZipBuild = { buildId: 'b-new', phase: 'fetch', fetched: 1, total: 5, startedAt: 1 };
+        // b-old fails BEFORE its initial write ever claims the state (the
+        // offscreen document creation rejects), so the catch's compare-and-
+        // clear must leave the newer claim untouched.
+        chrome.offscreen.createDocument.mockRejectedValue(new Error('cannot create'));
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                { action: 'build_zip', buildId: 'b-old', payload: { markdown: '# hi', title: 'p', sourceUrl: null } },
+                {},
+                resolve,
+            );
+        });
+        const response = await responsePromise;
+        expect(response).toMatchObject({ success: false });
+        expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'b-new', phase: 'fetch', fetched: 1, total: 5 });
+    });
 });
