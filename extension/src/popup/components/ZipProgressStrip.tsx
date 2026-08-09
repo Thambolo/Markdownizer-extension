@@ -7,7 +7,7 @@ export interface ZipProgressStripProps {
 export function ZipProgressStrip({ phase, fetched, total }: ZipProgressStripProps) {
   const pct = total > 0 ? Math.min(100, Math.round((fetched / total) * 100)) : 0;
   return (
-    <div class="px-4 pb-3" role="status" aria-live="polite">
+    <div class="w-full" role="status" aria-live="polite">
       <div class="mb-1 flex items-center justify-between text-[11px] text-slate-400">
         <span>{phase === 'fetch' ? `Fetching images ${fetched}/${total}…` : 'Building ZIP…'}</span>
         {phase === 'fetch' && total > 0 && <span class="font-mono">{pct}%</span>}

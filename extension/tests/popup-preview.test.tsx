@@ -2576,4 +2576,15 @@ describe('Zip build progress flow', () => {
             expect.objectContaining({ action: 'build_zip' }),
         );
     });
+
+    it('renders the progress strip above the Copy to Clipboard button', async () => {
+        await convertWithImages();
+
+        const strip = document.querySelector('[role="status"]') as HTMLElement;
+        const copyButton = Array.from(document.querySelectorAll('button'))
+            .find((b) => b.textContent?.includes('Copy to Clipboard')) as HTMLElement;
+        expect(strip).not.toBeNull();
+        expect(copyButton).not.toBeUndefined();
+        expect(strip.compareDocumentPosition(copyButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
 });

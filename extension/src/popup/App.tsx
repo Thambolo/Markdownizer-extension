@@ -477,6 +477,12 @@ export function App() {
                 bundling={zipBuild !== null}
             />
 
+            {/* Zip build progress: above the action buttons; gated only on
+                zipBuild so the mid-build restore path keeps showing it */}
+            {zipBuild && (
+              <ZipProgressStrip phase={zipBuild.phase} fetched={zipBuild.fetched} total={zipBuild.total} />
+            )}
+
             {/* Success Actions (Only visible on Success) */}
             {status === 'success' && (
                 <ActionButtons
@@ -491,10 +497,6 @@ export function App() {
             )}
 
         </main>
-
-        {zipBuild && (
-          <ZipProgressStrip phase={zipBuild.phase} fetched={zipBuild.fetched} total={zipBuild.total} />
-        )}
 
         <Footer
           autoDownload={autoDownload}
