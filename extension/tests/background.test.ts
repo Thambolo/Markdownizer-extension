@@ -360,6 +360,9 @@ describe('Background offscreen zip build flow', () => {
     it('relays offscreen zip:progress broadcasts to storage.session', async () => {
         await import('../src/background');
         messageListener!({ type: 'zip:progress', buildId: 'b-4', phase: 'fetch', fetched: 3, total: 10 }, {}, vi.fn());
+        // The relay compares against the current state first (async read),
+        // so flush the microtask chain before asserting.
+        await new Promise((r) => setTimeout(r, 0));
         expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'b-4', phase: 'fetch', fetched: 3, total: 10 });
     });
 
@@ -457,5 +460,48 @@ describe('Background offscreen zip build flow', () => {
         const status = await statusPromise;
         expect(status).toMatchObject({ active: false });
         expect(sessionData.activeZipBuild).toBeUndefined();
+    });
+
+    it("stale build progress does not clobber a newer build's state", async () => {
+        await import('../src/background');
+        sessionData.activeZipBuild = { buildId: 'b-new', phase: 'fetch', fetched: 1, total: 5, startedAt: 1 };
+        // A late progress tick from an older build must be ignored: the
+        // state now belongs to b-new.
+        messageListener!({ type: 'zip:progress', buildId: 'b-old', phase: 'fetch', fetched: 9, total: 9 }, {}, vi.fn());
+        await new Promise((r) => setTimeout(r, 0));
+        expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'b-new', phase: 'fetch', fetched: 1, total: 5 });
+        // Progress from the owning build still updates the state.
+        messageListener!({ type: 'zip:progress', buildId: 'b-new', phase: 'fetch', fetched: 3, total: 5 }, {}, vi.fn());
+        await new Promise((r) => setTimeout(r, 0));
+        expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'b-new', phase: 'fetch', fetched: 3, total: 5 });
+    });
+
+    it("an older build's failure does not clear a newer build's state", async () => {
+        await import('../src/background');
+        // Hold the older build's offscreen:build request open so the newer
+        // build can claim the shared state before the older build fails.
+        let rejectOldBuild: (err: Error) => void = () => {};
+        chrome.runtime.sendMessage.mockImplementation((message: { type?: string; buildId?: string }) =>
+            message?.type === 'offscreen:build' && message.buildId === 'b-old'
+                ? new Promise((_, reject) => { rejectOldBuild = reject; })
+                : Promise.resolve({ ok: true, buildId: message?.buildId, downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 }),
+        );
+        const oldResponsePromise = new Promise((resolve) => {
+            messageListener!(
+                { action: 'build_zip', buildId: 'b-old', payload: { markdown: '# hi', title: 'p', sourceUrl: null } },
+                {},
+                resolve,
+            );
+        });
+        await new Promise((r) => setTimeout(r, 10)); // b-old is mid-flight
+        // Build B claims the state (as its unconditional initial write
+        // would), then build A's request fails.
+        sessionData.activeZipBuild = { buildId: 'b-new', phase: 'fetch', fetched: 1, total: 5, startedAt: 1 };
+        rejectOldBuild(new Error('boom'));
+        const response = await oldResponsePromise;
+        expect(response).toMatchObject({ success: false });
+        expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'b-new', phase: 'fetch', fetched: 1, total: 5 });
+        const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:error');
+        expect(errorMsgs.some((m) => m.buildId === 'b-old')).toBe(true);
     });
 });

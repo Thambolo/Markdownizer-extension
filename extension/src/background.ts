@@ -62,15 +62,23 @@ chrome.runtime.onMessage.addListener((
         }
         if (request.type === 'zip:progress' && typeof request.buildId === 'string') {
             const p = request as { phase?: string; fetched?: number; total?: number };
+            // Compare-and-write: only write when no build owns the state yet
+            // or this build still owns it, so a stale build's late progress
+            // tick never clobbers a newer build's state.
             chrome.storage.session
-                .set({
-                    activeZipBuild: {
-                        buildId: request.buildId,
-                        startedAt: Date.now(),
-                        phase: p.phase === 'build' ? 'build' : 'fetch',
-                        fetched: p.fetched ?? 0,
-                        total: p.total ?? 0,
-                    },
+                .get('activeZipBuild')
+                .then((stored) => {
+                    const existing = (stored as { activeZipBuild?: { buildId?: string } }).activeZipBuild;
+                    if (existing && existing.buildId !== request.buildId) return;
+                    return chrome.storage.session.set({
+                        activeZipBuild: {
+                            buildId: request.buildId,
+                            startedAt: Date.now(),
+                            phase: p.phase === 'build' ? 'build' : 'fetch',
+                            fetched: p.fetched ?? 0,
+                            total: p.total ?? 0,
+                        },
+                    });
                 })
                 .catch(() => {});
             return false;
@@ -325,7 +333,14 @@ async function handleBuildZip(request: BuildZipRequest, sendResponse: (response:
             skippedImages: result.skippedImages,
         });
     } catch (err) {
-        await chrome.storage.session.remove('activeZipBuild').catch(() => {});
+        // Compare-and-clear: remove the active state only when it still
+        // belongs to this build (mirrors finalizeBuild), so a newer build's
+        // in-progress state survives an older build's failure.
+        const stored = await chrome.storage.session.get('activeZipBuild').catch(() => ({}));
+        const state = (stored as { activeZipBuild?: { buildId?: string } }).activeZipBuild;
+        if (state?.buildId === buildId) {
+            await chrome.storage.session.remove('activeZipBuild').catch(() => {});
+        }
         console.error('Markdownizer zip build failed:', err);
         const message = 'The download failed. Try again.';
         broadcast({ type: 'zip:error', buildId, error: message });
