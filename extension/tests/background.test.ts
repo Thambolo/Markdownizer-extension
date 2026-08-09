@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { unzipSync, strFromU8 } from 'fflate';
 
 type RuntimeMessageListener = (
     request: unknown,
     sender: unknown,
     sendResponse: (response: unknown) => void
 ) => boolean | undefined;
+
+// The background reads/deletes the build payload from IndexedDB; the node
+// test environment has no real IndexedDB, so mock the payload store.
+vi.mock('../src/idb-payload', () => ({
+    readPayload: vi.fn(async () => new Uint8Array([1, 2, 3])),
+    deletePayload: vi.fn(async () => {}),
+}));
 
 describe('Background conversion request flow', () => {
     let messageListener: RuntimeMessageListener | undefined;
@@ -216,7 +222,11 @@ describe('CodeMirror MAIN-world capture', () => {
     });
 });
 
-describe('Background zip build request flow', () => {
+describe('Background offscreen zip build flow', () => {
+    // Reuse the message-listener capture + sessionData pattern from the
+    // existing zip describe; runtime.sendMessage resolves with metadata:
+    //   { ok: true, buildId, downloaded: 'zip', filename: 'page.zip',
+    //     totalImages: 1, bundledImages: 1, skippedImages: 0 }
     let messageListener: RuntimeMessageListener | undefined;
     let sendMessageSpy: ReturnType<typeof vi.fn>;
     let sessionData: Record<string, unknown>;
@@ -226,7 +236,15 @@ describe('Background zip build request flow', () => {
         vi.resetModules();
         vi.stubEnv('VITE_API_URL', 'https://api-markdownizer.thambolo.com/convert');
         messageListener = undefined;
-        sendMessageSpy = vi.fn(async () => {});
+        sendMessageSpy = vi.fn(async (message: { buildId?: string }) => ({
+            ok: true,
+            buildId: message?.buildId,
+            downloaded: 'zip',
+            filename: 'page.zip',
+            totalImages: 1,
+            bundledImages: 1,
+            skippedImages: 0,
+        }));
         downloadsDownload = vi.fn(async () => 'download-id');
         sessionData = {};
 
@@ -239,6 +257,12 @@ describe('Background zip build request flow', () => {
                     }),
                 },
                 sendMessage: sendMessageSpy,
+                getContexts: vi.fn(async () => []),
+                getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
+            },
+            offscreen: {
+                createDocument: vi.fn(async () => {}),
+                closeDocument: vi.fn(async () => {}),
             },
             downloads: {
                 download: downloadsDownload,
@@ -272,181 +296,135 @@ describe('Background zip build request flow', () => {
         global.btoa = (input: string) => Buffer.from(input, 'binary').toString('base64');
     });
 
-    it('builds a zip in the service worker and downloads it as a data URL', async () => {
+    it('orchestrates offscreen build, downloads the payload, responds metadata-only', async () => {
         await import('../src/background');
+        chrome.offscreen.createDocument.mockClear();
+        chrome.runtime.getContexts.mockResolvedValue([]); // no document yet -> create
         const responsePromise = new Promise((resolve) => {
             messageListener!(
-                {
-                    action: 'build_zip',
-                    buildId: 'b-1',
-                    payload: { markdown: '![Hero](https://e.com/hero.png)', title: 'page', sourceUrl: 'https://e.com' },
-                },
+                { action: 'build_zip', buildId: 'b-1', payload: { markdown: '![Hero](https://e.com/hero.png)', title: 'page', sourceUrl: 'https://e.com' } },
                 {},
                 resolve,
             );
         });
         const response = await responsePromise;
+        expect(response).not.toHaveProperty('bytes');
+        expect(response).not.toHaveProperty('dataUrl');
         expect(response).toMatchObject({ success: true, downloaded: 'zip', filename: 'page.zip', bundledImages: 1 });
-        expect(downloadsDownload).toHaveBeenCalledTimes(1);
-        const [args] = downloadsDownload.mock.calls[0] as [{ url: string; filename: string }];
-        expect(args.filename).toBe('page.zip');
-        expect(args.url.startsWith('data:application/zip;base64,')).toBe(true);
-        // Progress was relayed to storage.session and broadcast
-        expect(sessionData.activeZipBuild).toBeUndefined(); // cleared on done
-        const progressMsgs = sendMessageSpy.mock.calls.map((c) => c[0]);
-        expect(progressMsgs.some((m) => m.type === 'zip:progress' && m.buildId === 'b-1' && m.phase === 'fetch')).toBe(true);
-        expect(progressMsgs.some((m) => m.type === 'zip:done' && m.buildId === 'b-1' && m.downloaded === 'zip')).toBe(true);
+        expect(chrome.offscreen.createDocument).toHaveBeenCalledWith(
+            expect.objectContaining({ url: expect.stringContaining('offscreen.html'), reasons: ['BLOBS'] }),
+        );
+        expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'offscreen:build', buildId: 'b-1' }),
+        );
+        const { readPayload } = await import('../src/idb-payload');
+        expect(readPayload).toHaveBeenCalledWith('b-1');
+        const [downloadArgs] = downloadsDownload.mock.calls[0] as [{ url: string; filename: string }];
+        expect(downloadArgs.filename).toBe('page.zip');
+        expect(downloadArgs.url.startsWith('data:application/zip;base64,')).toBe(true);
+        expect(sessionData.activeZipBuild).toBeUndefined();
+        const doneMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:done');
+        expect(doneMsgs.some((m) => m.buildId === 'b-1')).toBe(true);
+        expect(chrome.offscreen.closeDocument).toHaveBeenCalled();
     });
 
-    it('falls back to a markdown download when nothing bundles', async () => {
-        global.fetch = vi.fn(async () => { throw new Error('down'); }) as unknown as typeof fetch;
+    it('reuses an existing offscreen document', async () => {
         await import('../src/background');
+        chrome.runtime.getContexts.mockResolvedValue([{ contextType: 'OFFSCREEN_DOCUMENT' }]);
         const responsePromise = new Promise((resolve) => {
             messageListener!(
-                {
-                    action: 'build_zip',
-                    buildId: 'b-2',
-                    payload: { markdown: '![a](https://e.com/a.png)', title: 'page', sourceUrl: null },
-                },
+                { action: 'build_zip', buildId: 'b-2', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
                 {},
                 resolve,
             );
         });
-        const response = await responsePromise;
-        expect(response).toMatchObject({ success: true, downloaded: 'md', filename: 'page.md' });
-        const [args] = downloadsDownload.mock.calls[0] as [{ url: string; filename: string }];
-        expect(args.filename).toBe('page.md');
-        expect(args.url.startsWith('data:text/markdown;base64,')).toBe(true);
+        await responsePromise;
+        expect(chrome.offscreen.createDocument).not.toHaveBeenCalled();
     });
 
-    it('broadcasts zip:error and clears state when the download fails', async () => {
-        downloadsDownload.mockRejectedValue(new Error('shelf full'));
+    it('fails gracefully when the offscreen API is unsupported', async () => {
         await import('../src/background');
+        delete (global.chrome as { offscreen?: unknown }).offscreen;
         const responsePromise = new Promise((resolve) => {
             messageListener!(
-                {
-                    action: 'build_zip',
-                    buildId: 'b-4',
-                    payload: { markdown: '![a](https://e.com/a.png)', title: 'page', sourceUrl: null },
-                },
+                { action: 'build_zip', buildId: 'b-3', payload: { markdown: '# hi', title: 'p', sourceUrl: null } },
                 {},
                 resolve,
             );
         });
         const response = await responsePromise;
         expect(response).toMatchObject({ success: false });
-        expect(sessionData.activeZipBuild).toBeUndefined();
-        const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]);
-        expect(errorMsgs.some((m) => m.type === 'zip:error' && m.buildId === 'b-4')).toBe(true);
+        expect(sendMessageSpy.mock.calls.some((c) => c[0].type === 'zip:error' && c[0].buildId === 'b-3')).toBe(true);
     });
 
-    it('includes the source page URL in the zip README (decoded from the data URL)', async () => {
+    it('relays offscreen zip:progress broadcasts to storage.session', async () => {
         await import('../src/background');
-        const responsePromise = new Promise((resolve) => {
-            messageListener!(
-                {
-                    action: 'build_zip',
-                    buildId: 'b-5',
-                    payload: {
-                        markdown: 'Intro\n\n![Hero](https://e.com/hero.png)',
-                        title: 'page',
-                        sourceUrl: 'https://e.com',
-                    },
-                },
-                {},
-                resolve,
-            );
-        });
-        await responsePromise;
-        const [args] = downloadsDownload.mock.calls[0] as [{ url: string; filename: string }];
-        const base64 = args.url.split(',')[1];
-        const bytes = new Uint8Array(Buffer.from(base64, 'base64'));
-        const files = unzipSync(bytes);
-        const readme = strFromU8(files['README.md']);
-        expect(readme).toContain('https://e.com');
-        expect(strFromU8(files['page.md'])).toContain('![Hero](images/img-001.png)');
+        messageListener!({ type: 'zip:progress', buildId: 'b-4', phase: 'fetch', fetched: 3, total: 10 }, {}, vi.fn());
+        expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'b-4', phase: 'fetch', fetched: 3, total: 10 });
     });
 
-    it('awaits the session-state removal before broadcasting zip:done', async () => {
-        // Make session.remove resolve only when released: a fire-and-forget
-        // clear would let zip:done race ahead of the removal.
-        let releaseRemove!: () => void;
-        const removeGate = new Promise<void>((resolve) => { releaseRemove = resolve; });
-        const deferredRemove = vi.fn(() => removeGate.then(() => { delete sessionData.activeZipBuild; }));
-        (global.chrome.storage.session as unknown as { remove: unknown }).remove = deferredRemove as never;
-
+    it('zip:completed recovery downloads only for a matching buildId (idempotent)', async () => {
         await import('../src/background');
-        const responsePromise = new Promise((resolve) => {
-            messageListener!(
-                {
-                    action: 'build_zip',
-                    buildId: 'b-6',
-                    payload: { markdown: '![a](https://e.com/a.png)', title: 'page', sourceUrl: null },
-                },
-                {},
-                resolve,
-            );
-        });
-
-        // Wait until the build finished its progress phase; a proper await of
-        // the removal must hold the zip:done broadcast back until release.
-        await vi.waitFor(() => {
-            const msgs = sendMessageSpy.mock.calls.map((c) => c[0]);
-            expect(msgs.some((m) => m.type === 'zip:progress' && m.phase === 'build')).toBe(true);
-        });
-        // A couple of macrotask turns: an un-awaited remove would already
-        // have let zip:done through by now.
+        sessionData.activeZipBuild = { buildId: 'b-live', phase: 'build', fetched: 0, total: 0, startedAt: 1 };
+        const { deletePayload } = await import('../src/idb-payload');
+        messageListener!({ type: 'zip:completed', buildId: 'b-live', ok: true, downloaded: 'zip', filename: 'page.zip', totalImages: 2, bundledImages: 2, skippedImages: 0 }, {}, vi.fn());
+        // The handler is dispatched fire-and-forget; flush the microtask chain
+        // before asserting the download/state effects.
         await new Promise((r) => setTimeout(r, 0));
-        await new Promise((r) => setTimeout(r, 0));
-        const beforeRelease = sendMessageSpy.mock.calls.map((c) => c[0]);
-        expect(beforeRelease.some((m) => m.type === 'zip:done')).toBe(false);
-
-        releaseRemove();
-        const response = await responsePromise;
-        expect(response).toMatchObject({ success: true, downloaded: 'zip' });
-        expect(deferredRemove).toHaveBeenCalledWith('activeZipBuild');
-        // The state is already gone by the time the done broadcast is captured.
-        const msgs = sendMessageSpy.mock.calls.map((c) => c[0]);
-        expect(msgs.some((m) => m.type === 'zip:done' && m.buildId === 'b-6')).toBe(true);
+        expect(downloadsDownload).toHaveBeenCalledTimes(1);
+        expect(deletePayload).toHaveBeenCalledWith('b-live');
         expect(sessionData.activeZipBuild).toBeUndefined();
+        // The recovered zip:done broadcast carries the image counts for the popup note.
+        const doneMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:done');
+        expect(doneMsgs[0]).toMatchObject({ buildId: 'b-live', bundledImages: 2, totalImages: 2 });
+        // A duplicate broadcast (storage already cleared) must be ignored.
+        downloadsDownload.mockClear();
+        messageListener!({ type: 'zip:completed', buildId: 'b-live', ok: true, downloaded: 'zip', filename: 'page.zip', totalImages: 2, bundledImages: 2, skippedImages: 0 }, {}, vi.fn());
+        await new Promise((r) => setTimeout(r, 0));
+        expect(downloadsDownload).not.toHaveBeenCalled();
     });
 
-    it('leaves another build\'s session state in place when this build finishes (compare-and-clear)', async () => {
+    it('does not double-download when recovery finalizes before the response path', async () => {
         await import('../src/background');
-        // A second build overwrote the session state while this one ran; the
-        // first build's final clear must NOT remove the other build's state.
-        // No images -> no progress writes -> the seed survives to the end.
-        sessionData.activeZipBuild = { buildId: 'other-build', phase: 'fetch', fetched: 2, total: 10, startedAt: 1 };
+        // Hold ONLY the offscreen:build response open so the recovery
+        // broadcast can land first. (The recovery path's zip:done broadcast
+        // also calls runtime.sendMessage — if it were held too, it would
+        // overwrite releaseResponse and the response path would hang.)
+        let releaseResponse: (r: unknown) => void = () => {};
+        chrome.runtime.sendMessage.mockImplementation((message: { type?: string }) =>
+            message?.type === 'offscreen:build'
+                ? new Promise((resolve) => { releaseResponse = resolve; })
+                : Promise.resolve({ ok: true, buildId: 'b-race', downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 }),
+        );
+        sessionData.activeZipBuild = { buildId: 'b-race', phase: 'build', fetched: 0, total: 0, startedAt: 1 };
         const responsePromise = new Promise((resolve) => {
             messageListener!(
-                {
-                    action: 'build_zip',
-                    buildId: 'b-1',
-                    payload: { markdown: 'plain text, no images', title: 'page', sourceUrl: null },
-                },
+                { action: 'build_zip', buildId: 'b-race', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
                 {},
                 resolve,
             );
         });
+        await new Promise((r) => setTimeout(r, 10)); // let the handler reach the sendMessage await
+        // Recovery finalizes first (storage matches).
+        messageListener!({ type: 'zip:completed', buildId: 'b-race', ok: true, downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 }, {}, vi.fn());
+        await new Promise((r) => setTimeout(r, 10));
+        expect(downloadsDownload).toHaveBeenCalledTimes(1);
+        // Now the response path resolves: the Set claim must prevent a second download.
+        releaseResponse({ ok: true, buildId: 'b-race', downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 });
         const response = await responsePromise;
-        expect(response).toMatchObject({ success: true, downloaded: 'md' });
-        expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'other-build' });
+        expect(response).toMatchObject({ success: true });
+        expect(downloadsDownload).toHaveBeenCalledTimes(1); // still exactly one
     });
 
-    it('zip:status reports the live build and clears stale state', async () => {
+    it('zip:status clears stale state when no offscreen document exists', async () => {
         await import('../src/background');
-        sessionData.activeZipBuild = { buildId: 'b-live', phase: 'fetch', fetched: 3, total: 10, startedAt: 1 };
+        sessionData.activeZipBuild = { buildId: 'b-stale', phase: 'fetch', fetched: 1, total: 2, startedAt: 1 };
+        chrome.runtime.getContexts.mockResolvedValue([]); // orphaned: no document
         const statusPromise = new Promise((resolve) => {
-            messageListener!({ action: 'zip:status', buildId: 'b-live' }, {}, resolve);
+            messageListener!({ action: 'zip:status', buildId: 'b-stale' }, {}, resolve);
         });
         const status = await statusPromise;
-        expect(status).toMatchObject({ active: true, buildId: 'b-live', fetched: 3, total: 10 });
-
-        const stalePromise = new Promise((resolve) => {
-            messageListener!({ action: 'zip:status', buildId: 'b-gone' }, {}, resolve);
-        });
-        const stale = await stalePromise;
-        expect(stale).toMatchObject({ active: false });
-        expect(sessionData.activeZipBuild).toBeUndefined(); // stale state cleared
+        expect(status).toMatchObject({ active: false });
+        expect(sessionData.activeZipBuild).toBeUndefined();
     });
 });
