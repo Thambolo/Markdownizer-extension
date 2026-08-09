@@ -416,6 +416,37 @@ describe('Background offscreen zip build flow', () => {
         expect(downloadsDownload).toHaveBeenCalledTimes(1); // still exactly one
     });
 
+    it('responds success: false when the download fails', async () => {
+        await import('../src/background');
+        downloadsDownload.mockRejectedValueOnce(new Error('download failed'));
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                { action: 'build_zip', buildId: 'b-fail', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
+                {},
+                resolve,
+            );
+        });
+        const response = await responsePromise;
+        expect(response).toMatchObject({ success: false });
+        const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:error');
+        expect(errorMsgs.some((m) => m.buildId === 'b-fail')).toBe(true);
+        const { deletePayload } = await import('../src/idb-payload');
+        expect(deletePayload).toHaveBeenCalledWith('b-fail');
+        expect(sessionData.activeZipBuild).toBeUndefined();
+    });
+
+    it('zip:status reports active while a matching offscreen document exists', async () => {
+        await import('../src/background');
+        sessionData.activeZipBuild = { buildId: 'b-live2', phase: 'build', fetched: 0, total: 0, startedAt: 1 };
+        chrome.runtime.getContexts.mockResolvedValue([{ contextType: 'OFFSCREEN_DOCUMENT' }]);
+        const statusPromise = new Promise((resolve) => {
+            messageListener!({ action: 'zip:status', buildId: 'b-live2' }, {}, resolve);
+        });
+        const status = await statusPromise;
+        expect(status).toMatchObject({ active: true, buildId: 'b-live2' });
+        expect(sessionData.activeZipBuild).toBeDefined();
+    });
+
     it('zip:status clears stale state when no offscreen document exists', async () => {
         await import('../src/background');
         sessionData.activeZipBuild = { buildId: 'b-stale', phase: 'fetch', fetched: 1, total: 2, startedAt: 1 };

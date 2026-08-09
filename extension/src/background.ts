@@ -162,12 +162,17 @@ const OFFSCREEN_PATH = 'offscreen.html';
 let lifecycle: Promise<void> = Promise.resolve();
 let activeBuilds = 0;
 
-/** Builds whose finalization has already been claimed in THIS worker
- * instance. Both the primary response path and the zip:completed recovery
- * path funnel through finalizeBuild; the Set claim makes exactly one of them
- * download (in-memory claim is atomic within an instance, and a restarted
- * instance's recovery cannot collide with the dead instance's response path). */
-const completedBuilds = new Set<string>();
+/** Finalization outcomes per build, keyed by buildId. The Map entry is the
+ * atomic claim: the first caller (primary response path or zip:completed
+ * recovery path) creates the in-flight promise; any later caller awaits the
+ * claimer's ACTUAL outcome, so the response path reports the truth in every
+ * interleaving — including when the recovery path settled before the
+ * offscreen:build response arrived (the entry then survives the settle and
+ * resolves to the recorded outcome, so a build is never downloaded twice in
+ * one worker instance). Entries live for the instance's lifetime, like the
+ * Set claim they replace; a restarted instance's recovery cannot collide
+ * with the dead instance's response path (storage guard). */
+const finalizations = new Map<string, Promise<'done' | 'failed'>>();
 
 /** Serialize offscreen lifecycle operations: a pending close is always awaited
  * before the next create, so no close/create race is possible. */
@@ -214,36 +219,51 @@ interface ZipDoneMetadata {
 
 /**
  * Single finalization funnel for a completed build (download + done broadcast
- * + state clear). Exactly one caller proceeds per build: the in-memory Set
- * claim is checked+added synchronously, so the primary response path and the
- * zip:completed recovery path cannot both download within one worker
- * instance; across instances, only the instance whose storage still matches
- * the buildId proceeds (the other finds the state cleared).
+ * + state clear). Exactly one caller proceeds per build: the first caller
+ * claims by creating the Map entry synchronously, so the primary response
+ * path and the zip:completed recovery path cannot both download within one
+ * worker instance; across instances, only the instance whose storage still
+ * matches the buildId proceeds (the other finds the state cleared).
+ * Resolves 'done' on a successful download, 'failed' otherwise — never
+ * rejects, so the caller can await it and report the true outcome.
  */
-async function finalizeBuild(buildId: string, metadata: ZipDoneMetadata): Promise<void> {
-    if (completedBuilds.has(buildId)) return;
-    completedBuilds.add(buildId);
+async function finalizeBuild(buildId: string, metadata: ZipDoneMetadata): Promise<'done' | 'failed'> {
+    const claimed = finalizations.get(buildId);
+    if (claimed) return await claimed;
 
-    await chrome.storage.session.remove('activeZipBuild').catch(() => {});
-    try {
-        const bytes = await readPayload(buildId);
-        const mime = metadata.downloaded === 'md' ? 'text/markdown' : 'application/zip';
-        await chrome.downloads.download({ url: bytesToDataUrl(bytes, mime), filename: metadata.filename });
-        broadcast({
-            type: 'zip:done',
-            buildId,
-            downloaded: metadata.downloaded,
-            totalImages: metadata.totalImages,
-            bundledImages: metadata.bundledImages,
-            skippedImages: metadata.skippedImages,
-            filename: metadata.filename,
-        });
-    } catch (err) {
-        console.error('Markdownizer zip finalization failed:', err);
-        broadcast({ type: 'zip:error', buildId, error: 'The download failed. Try again.' });
-    } finally {
-        await deletePayload(buildId).catch(() => {});
-    }
+    const promise = (async (): Promise<'done' | 'failed'> => {
+        // Compare-and-clear: remove the active state only when it still
+        // belongs to this build, so a newer build's state survives.
+        const stored = await chrome.storage.session.get('activeZipBuild').catch(() => ({}));
+        const state = (stored as { activeZipBuild?: { buildId?: string } }).activeZipBuild;
+        if (state?.buildId === buildId) {
+            await chrome.storage.session.remove('activeZipBuild').catch(() => {});
+        }
+        try {
+            const bytes = await readPayload(buildId);
+            const mime = metadata.downloaded === 'md' ? 'text/markdown' : 'application/zip';
+            await chrome.downloads.download({ url: bytesToDataUrl(bytes, mime), filename: metadata.filename });
+            broadcast({
+                type: 'zip:done',
+                buildId,
+                downloaded: metadata.downloaded,
+                totalImages: metadata.totalImages,
+                bundledImages: metadata.bundledImages,
+                skippedImages: metadata.skippedImages,
+                filename: metadata.filename,
+            });
+            return 'done';
+        } catch (err) {
+            console.error('Markdownizer zip finalization failed:', err);
+            broadcast({ type: 'zip:error', buildId, error: 'The download failed. Try again.' });
+            return 'failed';
+        } finally {
+            await deletePayload(buildId).catch(() => {});
+        }
+    })();
+
+    finalizations.set(buildId, promise);
+    return promise;
 }
 
 async function handleBuildZip(request: BuildZipRequest, sendResponse: (response: unknown) => void): Promise<void> {
@@ -284,9 +304,11 @@ async function handleBuildZip(request: BuildZipRequest, sendResponse: (response:
 
         // The payload never travels in messages: it was stored in IndexedDB.
         // The recovery path may already have finalized this build (its
-        // zip:completed broadcast can beat the response channel); the Set
-        // claim in finalizeBuild makes double downloads impossible.
-        await finalizeBuild(buildId, {
+        // zip:completed broadcast can beat the response channel); the Map
+        // claim in finalizeBuild makes double downloads impossible and the
+        // returned outcome reflects the CLAIMER's result, so this response
+        // reports the truth in every interleaving.
+        const outcome = await finalizeBuild(buildId, {
             downloaded: result.downloaded ?? 'md',
             filename: result.filename ?? 'download',
             totalImages: result.totalImages ?? 0,
@@ -295,7 +317,7 @@ async function handleBuildZip(request: BuildZipRequest, sendResponse: (response:
         });
         // Metadata only — never the payload.
         sendResponse({
-            success: true,
+            success: outcome === 'done',
             downloaded: result.downloaded,
             filename: result.filename,
             totalImages: result.totalImages,
@@ -331,7 +353,7 @@ interface ZipCompletedMessage {
  * Recovery path: the service worker may have been killed while the offscreen
  * document kept building. Process completion only when storage still matches
  * this buildId (a fresh worker instance), then funnel through finalizeBuild —
- * the Set claim makes it idempotent within an instance, and the storage
+ * the Map claim makes it idempotent within an instance, and the storage
  * guard makes it idempotent across instances.
  */
 async function handleZipCompleted(message: ZipCompletedMessage): Promise<void> {
@@ -342,6 +364,9 @@ async function handleZipCompleted(message: ZipCompletedMessage): Promise<void> {
     if (!message.ok) {
         await chrome.storage.session.remove('activeZipBuild').catch(() => {});
         broadcast({ type: 'zip:error', buildId: message.buildId, error: message.error ?? 'The download failed. Try again.' });
+        // No response-path finally runs here (this branch handles the
+        // SW-restart failure case), so close the document explicitly.
+        await closeOffscreenDocumentIfIdle();
         return;
     }
     await finalizeBuild(message.buildId, {
