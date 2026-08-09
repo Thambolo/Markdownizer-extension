@@ -377,7 +377,10 @@ export function App() {
       });
     } catch {
       // The done/error broadcast messages drive the UI; a dead response
-      // channel (e.g. popup about to close) is not an error.
+      // channel (e.g. popup about to close) is not an error. Clear the
+      // strip so the pill cannot wedge on "Bundling images…" and the
+      // action buttons cannot stay disabled if the build never starts.
+      setZipBuildState(null);
     }
   };
 
@@ -465,7 +468,14 @@ export function App() {
 
             <StatusOrb status={status} handleConvert={handleConvert} />
 
-            <StatusMessage status={status} markdownLength={markdown.length} error={error} warning={previewWarning || permissionWarning} note={imagesNote} />
+            <StatusMessage
+                status={status}
+                markdownLength={markdown.length}
+                error={error}
+                warning={previewWarning || permissionWarning}
+                note={imagesNote}
+                bundling={zipBuild !== null}
+            />
 
             {/* Success Actions (Only visible on Success) */}
             {status === 'success' && (

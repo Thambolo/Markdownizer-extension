@@ -2446,6 +2446,7 @@ describe('Zip build progress flow', () => {
         await act(async () => { await new Promise(r => setTimeout(r, 20)); });
         expect(document.querySelector('[role="status"]')).toBeNull();
         expect(document.body.textContent).toContain('Included 2 images');
+        expect(document.querySelector('h2')?.textContent).toContain('Content extracted');
     });
 
     it('ignores messages with a stale buildId', async () => {
@@ -2465,6 +2466,65 @@ describe('Zip build progress flow', () => {
         await act(async () => { await new Promise(r => setTimeout(r, 20)); });
         expect(document.querySelector('[role="status"]')).toBeNull();
         expect(document.body.textContent).toContain('Could not build the download.');
+        expect(document.querySelector('h2')?.textContent).toContain('Content extracted');
+    });
+
+    it('shows "Bundling images…" in the status pill while the zip build is in flight', async () => {
+        await convertWithImages();
+
+        const pill = document.querySelector('h2');
+        expect(pill?.textContent).toContain('Bundling images');
+        expect(pill?.textContent).not.toContain('Content extracted');
+    });
+
+    it('recovers when the zip build message fails to send', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true });
+        chrome.tabs.sendMessage.mockResolvedValue({
+            success: true,
+            markdown: '![Hero](https://e.com/hero.png)',
+        });
+        chrome.runtime.sendMessage.mockRejectedValueOnce(new Error('port closed'));
+        await renderApp();
+        emitEligibility();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        expect(document.querySelector('[role="status"]')).toBeNull();
+        expect(document.querySelector('h2')?.textContent).toContain('Content extracted');
+    });
+
+    it('notes the md-only fallback when the zip build found no images', async () => {
+        await convertWithImages();
+        const buildId = (chrome.runtime.sendMessage.mock.calls[0][0] as { buildId: string }).buildId;
+        emitMessage({ type: 'zip:done', buildId, downloaded: 'md', totalImages: 2, bundledImages: 0, skippedImages: 2, filename: 'Example.zip' });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        expect(document.body.textContent).toContain('Images unavailable - downloaded .md only');
+        expect(document.querySelector('h2')?.textContent).toContain('Content extracted');
+    });
+
+    it('shows no images note when the md-only fallback has no images at all', async () => {
+        await convertWithImages();
+        const buildId = (chrome.runtime.sendMessage.mock.calls[0][0] as { buildId: string }).buildId;
+        emitMessage({ type: 'zip:done', buildId, downloaded: 'md', totalImages: 0, bundledImages: 0, skippedImages: 0, filename: 'Example.zip' });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        expect(document.body.textContent).not.toContain('Images unavailable');
+        expect(document.body.textContent).not.toContain('Included');
+    });
+
+    it('keeps "Processing content..." during a re-convert while a build is in flight', async () => {
+        await convertWithImages();
+        chrome.tabs.sendMessage.mockReturnValueOnce(new Promise(() => {}));
+        const startButton = Array.from(document.querySelectorAll('button'))
+            .find((b) => b.textContent?.includes('start')) as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        expect(document.querySelector('h2')?.textContent).toContain('Processing content');
+        expect(document.querySelector('h2')?.textContent).not.toContain('Bundling images');
     });
 
     it('restores progress on reopen from storage.session and refreshes via zip:status', async () => {
@@ -2482,6 +2542,8 @@ describe('Zip build progress flow', () => {
             expect.objectContaining({ action: 'zip:status', buildId: 'b-reopen' }),
         );
         expect(document.body.textContent).toContain('Fetching images 5/10');
+        // Restore path keeps status idle: pill stays "Ready to capture"
+        expect(document.querySelector('h2')?.textContent).toContain('Ready to capture');
     });
 
     it('hides the strip when zip:status reports the build is gone', async () => {

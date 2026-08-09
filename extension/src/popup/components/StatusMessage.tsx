@@ -6,9 +6,10 @@ interface StatusMessageProps {
   error: string;
   warning?: string;
   note?: string;
+  bundling?: boolean;
 }
 
-export function StatusMessage({ status, markdownLength, error, warning, note }: StatusMessageProps) {
+export function StatusMessage({ status, markdownLength, error, warning, note, bundling }: StatusMessageProps) {
   const showWarning = warning && status !== 'error';
 
   return (
@@ -26,10 +27,17 @@ export function StatusMessage({ status, markdownLength, error, warning, note }: 
         {status === 'loading' && 'Processing content...'}
         {status === 'success' && (
           <>
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-            </svg>
-            <span>Content extracted</span>
+            {bundling ? (
+              <span
+                class="inline-block w-4 h-4 border-2 border-emerald-300 border-t-transparent rounded-full animate-spin"
+                aria-hidden="true"
+              />
+            ) : (
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+            <span>{bundling ? 'Bundling images…' : 'Content extracted'}</span>
           </>
         )}
         {status === 'error' && 'Something went wrong'}
