@@ -4,9 +4,14 @@ interface StatusMessageProps {
   status: Status;
   markdownLength: number;
   error: string;
+  warning?: string;
+  note?: string;
+  bundling?: boolean;
 }
 
-export function StatusMessage({ status, markdownLength, error }: StatusMessageProps) {
+export function StatusMessage({ status, markdownLength, error, warning, note, bundling }: StatusMessageProps) {
+  const showWarning = warning && status !== 'error';
+
   return (
     <div class="text-center space-y-1 h-12 pt-2 flex flex-col items-center justify-start">
       <h2
@@ -22,19 +27,30 @@ export function StatusMessage({ status, markdownLength, error }: StatusMessagePr
         {status === 'loading' && 'Processing content...'}
         {status === 'success' && (
           <>
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-            </svg>
-            <span>Content extracted</span>
+            {bundling ? (
+              <span
+                class="inline-block w-4 h-4 border-2 border-emerald-300 border-t-transparent rounded-full animate-spin"
+                aria-hidden="true"
+              />
+            ) : (
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+            <span>{bundling ? 'Bundling images…' : 'Content extracted'}</span>
           </>
         )}
         {status === 'error' && 'Something went wrong'}
       </h2>
 
       <p class={`text-[10px] font-mono mt-1 ${status === 'error' ? 'text-red-400' : 'text-slate-400'}`}>
-        {status === 'success' && `${markdownLength} chars`}
+        {status === 'success' && (note ? `${markdownLength} chars · ${note}` : `${markdownLength} chars`)}
         {status === 'error' && error}
       </p>
+
+      {showWarning && (
+        <p class="text-[10px] font-mono mt-1 text-amber-400">{warning}</p>
+      )}
     </div>
   );
 }

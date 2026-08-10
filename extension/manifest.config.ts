@@ -46,10 +46,15 @@ export default defineManifest(async (env) => {
     permissions: [
       "activeTab",
       "scripting",
-      "storage"
+      "storage",
+      "downloads",
+      "offscreen"
     ],
     host_permissions: [
       getApiMatchPattern(loadedEnv)
+    ],
+    optional_host_permissions: [
+      "<all_urls>"
     ],
     action: {
       default_popup: "index.html",

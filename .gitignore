@@ -54,3 +54,13 @@ trivy-results.sarif
 # Agent Context
 GEMINI.md
 dev_helpers/
+
+# Superpowers workspace state
+.superpowers/
+docs/superpowers/
+
+# Repo instructions (private, local only — never commit)
+AGENTS.md
+
+# Playwright screenshot artifacts (browser test failures)
+__screenshots__/
