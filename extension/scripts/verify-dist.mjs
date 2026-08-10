@@ -77,12 +77,11 @@ if (existsSync(indexHtml) && readFileSync(indexHtml, 'utf8').includes('modulepre
   errors.push('index.html contains modulepreload links');
 }
 
-// 5. The offscreen document entry must exist in the build output. Assert
-//    stable string literals that survive minification ('offscreen:build' is
-//    the message type the module handles; 'zip-payloads' is the IndexedDB
-//    store name), NOT minified identifiers like buildZipResult. The store
-//    may live in a shared chunk (the background imports idb-payload too), so
-//    walk the offscreen entry's transitive import graph.
+// 5. The offscreen document entry must exist in the build output. Assert a
+//    stable string literal that survives minification ('offscreen:build' is
+//    the message type the module handles), NOT minified identifiers like
+//    buildZipResult. Walk the offscreen entry's transitive import graph so
+//    shared chunks are covered too.
 const offscreenHtml = join(distDir, 'offscreen.html');
 if (!existsSync(offscreenHtml)) errors.push('offscreen.html missing from dist');
 else {
@@ -103,7 +102,6 @@ else {
     for (const file of seen) contents.set(file, readFileSync(join(distDir, file), 'utf8'));
     const chunk = contents.get(chunkFile) ?? '';
     if (!chunk.includes('offscreen:build')) errors.push(`offscreen chunk ${chunkFile} missing the build handler`);
-    if (![...contents.values()].some((c) => c.includes('zip-payloads'))) errors.push(`offscreen chunk ${chunkFile} missing the payload store`);
   }
 }
 

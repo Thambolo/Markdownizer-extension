@@ -1,12 +1,9 @@
 // zip-build-service.ts - ZIP bundle construction. No chrome API references:
 // this module runs inside the hidden offscreen document, which only has the
-// runtime extension API. The produced bytes are stored via the caller
-// (IndexedDB); the service worker performs the actual download.
+// runtime extension API. The produced bytes are downloaded directly by the
+// offscreen document via a blob anchor.
 
 import { buildZipBlob, type ZipBuildProgress } from './popup/zip-download';
-import { bytesToDataUrl } from './base64';
-
-export { bytesToDataUrl };
 
 export interface ZipBuildResult {
     downloaded: 'zip' | 'md';
@@ -14,7 +11,7 @@ export interface ZipBuildResult {
     totalImages: number;
     bundledImages: number;
     skippedImages: number;
-    bytes: Uint8Array;
+    bytes: Uint8Array<ArrayBuffer>;
 }
 
 /**

@@ -1,18 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildZipResult } from '../src/zip-build-service';
-import { bytesToDataUrl } from '../src/base64';
-
-describe('bytesToDataUrl', () => {
-    it('encodes bytes as a base64 data URL', () => {
-        const url = bytesToDataUrl(new TextEncoder().encode('hello'), 'text/plain');
-        expect(url).toBe('data:text/plain;base64,aGVsbG8=');
-    });
-
-    it('re-exports bytesToDataUrl from zip-build-service for compatibility', async () => {
-        const mod = await import('../src/zip-build-service');
-        expect(typeof mod.bytesToDataUrl).toBe('function');
-    });
-});
 
 describe('buildZipResult', () => {
     const originalFetch = globalThis.fetch;
@@ -54,7 +41,5 @@ describe('buildZipResult', () => {
         const fs = await import('node:fs');
         const source = fs.readFileSync(new URL('../src/zip-build-service.ts', import.meta.url), 'utf8');
         expect(source).not.toMatch(/chrome\./);
-        const base64Source = fs.readFileSync(new URL('../src/base64.ts', import.meta.url), 'utf8');
-        expect(base64Source).not.toMatch(/chrome\./);
     });
 });
