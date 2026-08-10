@@ -1970,7 +1970,7 @@ describe('Download images toggle', () => {
         expect(latest).toHaveProperty('includeIframes', true);
 
         // Second eligibility from the re-inspection: the frame image now
-        // counts, so the include-images toggle appears (F8 + F6 end-to-end).
+        // counts, so the include-images toggle is enabled (F8 + F6 end-to-end).
         port.emitMessage({
             type: 'preview:eligibility',
             sessionId: latest.sessionId,
