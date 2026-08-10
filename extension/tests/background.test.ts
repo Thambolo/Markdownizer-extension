@@ -259,6 +259,7 @@ describe('Background offscreen zip build flow', () => {
             },
             downloads: {
                 download: downloadsDownload,
+                search: vi.fn(async () => []),
             },
             storage: {
                 sync: {
@@ -576,5 +577,167 @@ describe('Background offscreen zip build flow', () => {
         const response = await responsePromise;
         expect(response).toMatchObject({ success: false });
         expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'b-new', phase: 'fetch', fetched: 1, total: 5 });
+    });
+
+    it('broadcasts zip:error when no download item appears within the watch window', async () => {
+        vi.useFakeTimers();
+        await import('../src/background');
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                { action: 'build_zip', buildId: 'b-watch', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
+                {},
+                resolve,
+            );
+        });
+        const response = await responsePromise;
+        expect(response).toMatchObject({ success: true });
+        await vi.advanceTimersByTimeAsync(11_000);
+        const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:error');
+        expect(errorMsgs.some((m) => m.buildId === 'b-watch')).toBe(true);
+        vi.useRealTimers();
+    });
+
+    it('does not broadcast zip:error when a download item appears', async () => {
+        vi.useFakeTimers();
+        const search = chrome.downloads.search as ReturnType<typeof vi.fn>;
+        search
+            .mockResolvedValueOnce([]) // snapshot at build_zip arrival
+            .mockResolvedValueOnce([{ id: 999, state: 'in_progress' }]); // first watchdog poll
+        await import('../src/background');
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                { action: 'build_zip', buildId: 'b-watch2', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
+                {},
+                resolve,
+            );
+        });
+        const response = await responsePromise;
+        expect(response).toMatchObject({ success: true });
+        await vi.advanceTimersByTimeAsync(11_000);
+        const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:error' && m.buildId === 'b-watch2');
+        expect(errorMsgs).toHaveLength(0);
+        expect(search).toHaveBeenCalledTimes(2); // snapshot + first poll, then stopped
+        vi.useRealTimers();
+    });
+
+    it('broadcasts zip:error when the new download item is interrupted', async () => {
+        vi.useFakeTimers();
+        const search = chrome.downloads.search as ReturnType<typeof vi.fn>;
+        search
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ id: 999, state: 'interrupted' }]);
+        await import('../src/background');
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                { action: 'build_zip', buildId: 'b-watch3', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
+                {},
+                resolve,
+            );
+        });
+        await responsePromise;
+        await vi.advanceTimersByTimeAsync(0);
+        const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:error');
+        expect(errorMsgs.some((m) => m.buildId === 'b-watch3')).toBe(true);
+        vi.useRealTimers();
+    });
+
+    it('ignores an unrelated interrupted item when a new item is downloading', async () => {
+        vi.useFakeTimers();
+        const search = chrome.downloads.search as ReturnType<typeof vi.fn>;
+        search
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ id: 999, state: 'interrupted' }, { id: 1000, state: 'in_progress' }]);
+        await import('../src/background');
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                { action: 'build_zip', buildId: 'b-watch4', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
+                {},
+                resolve,
+            );
+        });
+        await responsePromise;
+        await vi.advanceTimersByTimeAsync(11_000);
+        const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:error' && m.buildId === 'b-watch4');
+        expect(errorMsgs).toHaveLength(0);
+        vi.useRealTimers();
+    });
+
+    it('recovery watchdog: zip:completed with no item broadcasts zip:error', async () => {
+        vi.useFakeTimers();
+        await import('../src/background');
+        sessionData.activeZipBuild = { buildId: 'b-recv', phase: 'build', fetched: 0, total: 0, startedAt: 1 };
+        messageListener!({ type: 'zip:completed', buildId: 'b-recv', ok: true, downloaded: 'zip', filename: 'page.zip', totalImages: 2, bundledImages: 2, skippedImages: 0 }, {}, vi.fn());
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(11_000);
+        const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:error');
+        expect(errorMsgs.some((m) => m.buildId === 'b-recv')).toBe(true);
+        vi.useRealTimers();
+    });
+
+    it('recovery watchdog: zip:completed with the item present broadcasts no zip:error', async () => {
+        vi.useFakeTimers();
+        const search = chrome.downloads.search as ReturnType<typeof vi.fn>;
+        search.mockResolvedValueOnce([{ id: 999, state: 'in_progress' }]);
+        await import('../src/background');
+        sessionData.activeZipBuild = { buildId: 'b-recv2', phase: 'build', fetched: 0, total: 0, startedAt: 1 };
+        messageListener!({ type: 'zip:completed', buildId: 'b-recv2', ok: true, downloaded: 'zip', filename: 'page.zip', totalImages: 2, bundledImages: 2, skippedImages: 0 }, {}, vi.fn());
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(11_000);
+        const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:error' && m.buildId === 'b-recv2');
+        expect(errorMsgs).toHaveLength(0);
+        vi.useRealTimers();
+    });
+
+    it('builds succeed when the downloads API is unavailable', async () => {
+        await import('../src/background');
+        delete (global.chrome as { downloads?: unknown }).downloads;
+        const responsePromise = new Promise((resolve) => {
+            messageListener!(
+                { action: 'build_zip', buildId: 'b-guard', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
+                {},
+                resolve,
+            );
+        });
+        const response = await responsePromise;
+        expect(response).toMatchObject({ success: true });
+        expect(sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:error')).toHaveLength(0);
+    });
+
+    it('takes the download snapshot once per worker instance (overlapping builds)', async () => {
+        await import('../src/background');
+        const search = chrome.downloads.search as ReturnType<typeof vi.fn>;
+        // Call 1 = the snapshot (must be EMPTY so 999 counts as new for the
+        // watchdogs); calls 2+ = watchdog polls (the item exists).
+        let searchCalls = 0;
+        search.mockImplementation(async () => {
+            searchCalls += 1;
+            return searchCalls === 1 ? [] : [{ id: 999, state: 'in_progress' }];
+        });
+        const releases: Array<(r: unknown) => void> = [];
+        chrome.runtime.sendMessage.mockImplementation((message: { type?: string; buildId?: string }) =>
+            message?.type === 'offscreen:build'
+                ? new Promise((resolve) => { releases.push(resolve); })
+                : Promise.resolve({ ok: true, buildId: message.buildId, downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 }),
+        );
+        const dispatch = (buildId: string) => new Promise((resolve) => {
+            messageListener!(
+                { action: 'build_zip', buildId, payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
+                {},
+                resolve,
+            );
+        });
+        const responseA = dispatch('b-ovA');
+        await new Promise((r) => setTimeout(r, 10)); // A reaches the offscreen await
+        const responseB = dispatch('b-ovB');
+        await new Promise((r) => setTimeout(r, 10)); // B arrives while A is in flight
+        releases[1]({ ok: true, buildId: 'b-ovB', downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 });
+        await responseB;
+        releases[0]({ ok: true, buildId: 'b-ovA', downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 });
+        await responseA;
+        // Snapshot taken ONCE (B's arrival did not refresh it); both watchdogs
+        // found the item via their polls — no false zip:error.
+        expect(search).toHaveBeenCalledTimes(3); // 1 snapshot + A poll + B poll
+        const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:error');
+        expect(errorMsgs).toHaveLength(0);
     });
 });
