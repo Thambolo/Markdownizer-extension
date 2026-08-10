@@ -52,6 +52,11 @@ export function App() {
   }
   const [zipBuild, setZipBuildStateRaw] = useState<ZipBuildState | null>(null);
   const zipBuildRef = useRef<ZipBuildState | null>(null);
+  // The most recent zip build's id. Unlike zipBuildRef (nulled on zip:done so
+  // the progress strip clears), this survives zip:done so a delayed zip:error
+  // from the download-appearance watchdog can still render. Nulled on a new
+  // build start, on zip:error, and on unmount.
+  const lastBuildIdRef = useRef<string | null>(null);
   const setZipBuildState = (next: ZipBuildState | null) => {
     zipBuildRef.current = next;
     setZipBuildStateRaw(next);
@@ -162,7 +167,7 @@ export function App() {
     const handleMessage = (message: unknown) => {
       const msg = message as { type?: string; buildId?: string } | null;
       if (!msg || typeof msg !== 'object' || typeof msg.buildId !== 'string') return;
-      if (msg.buildId !== zipBuildRef.current?.buildId) return;
+      if (msg.buildId !== (zipBuildRef.current?.buildId ?? lastBuildIdRef.current)) return;
 
       if (msg.type === 'zip:progress') {
         const p = msg as { phase?: string; fetched?: number; total?: number };
@@ -189,12 +194,16 @@ export function App() {
         }
       } else if (msg.type === 'zip:error') {
         const e = msg as { error?: string };
+        lastBuildIdRef.current = null;
         setZipBuildState(null);
         setImagesNote(e.error ?? 'Image bundling failed');
       }
     };
     chrome.runtime.onMessage.addListener(handleMessage);
-    return () => chrome.runtime.onMessage.removeListener(handleMessage);
+    return () => {
+      lastBuildIdRef.current = null;
+      chrome.runtime.onMessage.removeListener(handleMessage);
+    };
     // Mount-only listener: stable setters and refs only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -217,6 +226,7 @@ export function App() {
           fetched: state.fetched ?? 0,
           total: state.total ?? 0,
         });
+        lastBuildIdRef.current = state.buildId;
         const response = await chrome.runtime.sendMessage({ action: 'zip:status', buildId: state.buildId });
         if (cancelled) return;
         if (response?.active) {
@@ -226,6 +236,7 @@ export function App() {
             fetched: response.fetched ?? 0,
             total: response.total ?? 0,
           });
+          lastBuildIdRef.current = response.buildId;
         } else {
           setZipBuildState(null);
         }
@@ -367,6 +378,7 @@ export function App() {
 
   const downloadWithImages = async (markdownText: string, safeTitle: string, sourceUrl?: string) => {
     const buildId = crypto.randomUUID();
+    lastBuildIdRef.current = buildId;
     setImagesNote('');
     setZipBuildState({ buildId, phase: 'fetch', fetched: 0, total: 0 });
     try {

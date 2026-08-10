@@ -2661,4 +2661,38 @@ describe('Zip build progress flow', () => {
         expect(copyButton).not.toBeUndefined();
         expect(strip.compareDocumentPosition(copyButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
+
+    it('shows the zip:error note even when it arrives after zip:done', async () => {
+        await convertWithImages();
+        const buildId = (chrome.runtime.sendMessage.mock.calls[0][0] as { buildId: string }).buildId;
+        emitMessage({ type: 'zip:done', buildId, downloaded: 'zip', totalImages: 1, bundledImages: 1, skippedImages: 0, filename: 'Example.zip' });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(document.querySelector('h2')?.textContent).toContain('Content extracted');
+
+        // The SW watchdog broadcasts zip:error up to 10 s after zip:done when
+        // no download item appeared.
+        emitMessage({ type: 'zip:error', buildId, error: 'The download failed. Try again.' });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(document.body.textContent).toContain('The download failed. Try again.');
+        expect(document.querySelector('[role="status"]')).toBeNull();
+        expect(document.querySelector('h2')?.textContent).toContain('Content extracted');
+    });
+
+    it('drops zip:error for a superseded build after a newer one starts', async () => {
+        await convertWithImages();
+        const oldBuildId = (chrome.runtime.sendMessage.mock.calls[0][0] as { buildId: string }).buildId;
+        emitMessage({ type: 'zip:done', buildId: oldBuildId, downloaded: 'zip', totalImages: 1, bundledImages: 1, skippedImages: 0, filename: 'Example.zip' });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        // zip:done flips the "Downloaded!" badge on for 2 s, which replaces the
+        // download button row; wait it out so the .md + images button is back.
+        await act(async () => { await new Promise(r => setTimeout(r, 2100)); });
+        const mdImagesButton = Array.from(document.querySelectorAll('button'))
+            .find((b) => b.textContent?.includes('.md + images')) as HTMLButtonElement;
+        await act(async () => { mdImagesButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        emitMessage({ type: 'zip:error', buildId: oldBuildId, error: 'stale error' });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(document.body.textContent).not.toContain('stale error');
+    });
 });
