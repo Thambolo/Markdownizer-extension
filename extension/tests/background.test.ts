@@ -259,7 +259,7 @@ describe('Background offscreen zip build flow', () => {
             },
             downloads: {
                 download: downloadsDownload,
-                search: vi.fn(async () => []),
+                search: vi.fn(async () => [{ id: -1, state: 'in_progress' }]),
             },
             storage: {
                 sync: {
@@ -664,6 +664,7 @@ describe('Background offscreen zip build flow', () => {
 
     it('recovery watchdog: zip:completed with no item broadcasts zip:error', async () => {
         vi.useFakeTimers();
+        (chrome.downloads.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
         await import('../src/background');
         sessionData.activeZipBuild = { buildId: 'b-recv', phase: 'build', fetched: 0, total: 0, startedAt: 1 };
         messageListener!({ type: 'zip:completed', buildId: 'b-recv', ok: true, downloaded: 'zip', filename: 'page.zip', totalImages: 2, bundledImages: 2, skippedImages: 0 }, {}, vi.fn());
