@@ -1,7 +1,7 @@
 interface ActionButtonsProps {
   copied: boolean;
   downloaded: boolean;
-  includeImages: boolean;
+  imagesActive: boolean;
   bundling: boolean;
   handleCopy: () => void;
   handleDownload: () => void;
@@ -16,7 +16,7 @@ function DownloadIcon({ className = 'w-4 h-4' }: { className?: string }) {
   );
 }
 
-export function ActionButtons({ copied, downloaded, includeImages, bundling, handleCopy, handleDownload, handleDownloadZip }: ActionButtonsProps) {
+export function ActionButtons({ copied, downloaded, imagesActive, bundling, handleCopy, handleDownload, handleDownloadZip }: ActionButtonsProps) {
   return (
     <div class="flex flex-col gap-3 w-full animate-in slide-in-from-bottom-4 duration-500">
       <button
@@ -46,7 +46,7 @@ export function ActionButtons({ copied, downloaded, includeImages, bundling, han
           </svg>
           <span>Downloaded!</span>
         </button>
-      ) : includeImages ? (
+      ) : imagesActive ? (
         <div class="flex w-full rounded-xl border border-slate-500 bg-slate-800 overflow-hidden">
           <button
             onClick={handleDownload}

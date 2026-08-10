@@ -38,6 +38,7 @@ export function App() {
   const previewEnabledRef = useRef(true);
   const inspectionGenerationRef = useRef(0);
   const [imagesEligible, setImagesEligible] = useState(false);
+  const imagesEligibleRef = useRef(false);
   const [includeImages, setIncludeImages] = useState(false);
   const [permissionWarning, setPermissionWarning] = useState('');
   const [imagesNote, setImagesNote] = useState('');
@@ -94,6 +95,7 @@ export function App() {
         requestIframeInspection(sessionRef.current, message.captureMode);
     }
     setImagesEligible(message.hasImages);
+    imagesEligibleRef.current = message.hasImages;
   };
 
   useEffect(() => {
@@ -442,11 +444,12 @@ export function App() {
         setFilename(safeTitle);
         setStatus('success');
 
-        // "Download images" ON: converting also bundles the page images and
-        // auto-downloads the ZIP (the toggle alone triggers it, regardless of
-        // the auto-download setting). Toggle OFF: auto-download keeps gating
-        // the plain .md path.
-        if (includeImagesRef.current) {
+        // "Download images" ON and the page has images (eligibility):
+        // converting also bundles the page images and auto-downloads the ZIP
+        // (the toggle alone triggers it, regardless of the auto-download
+        // setting). Toggle OFF or an image-less page (dormant preference):
+        // auto-download keeps gating the plain .md path.
+        if (includeImagesRef.current && imagesEligibleRef.current) {
             downloadWithImages(response.markdown, safeTitle, tab.url);
         } else if (autoDownload) {
             downloadFile(response.markdown, safeTitle);
@@ -492,7 +495,7 @@ export function App() {
                 <ActionButtons
                     copied={copied}
                     downloaded={downloaded}
-                    includeImages={includeImagesRef.current}
+                    imagesActive={includeImagesRef.current && imagesEligibleRef.current}
                     bundling={zipBuild !== null}
                     handleCopy={handleCopy}
                     handleDownload={() => { setImagesNote(''); downloadFile(markdown, filename); }}

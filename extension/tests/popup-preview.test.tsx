@@ -2527,6 +2527,129 @@ describe('Zip download flow', () => {
             expect.objectContaining({ action: 'build_zip' }),
         );
     });
+
+    function emitNoImageEligibility() {
+        const port = lastPort!;
+        const inspect = port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .find((m) => m.type === 'preview:inspect');
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: inspect!.sessionId,
+            captureMode: 'smart',
+            generation: inspect!.generation,
+            hasEligibleIframes: false,
+            hasImages: false,
+        });
+    }
+
+    it('downloads nothing on convert when the page has no images and auto-download is off', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true, autoDownload: false });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true, markdown: '# Hello' });
+        vi.stubGlobal('fetch', vi.fn());
+        const createObjectURL = vi.fn(() => 'blob:mock');
+        const revokeObjectURL = vi.fn();
+        vi.stubGlobal('URL', new Proxy(URL, {
+            get: (target, prop, receiver) => {
+                if (prop === 'createObjectURL') return createObjectURL;
+                if (prop === 'revokeObjectURL') return revokeObjectURL;
+                return Reflect.get(target, prop, receiver);
+            },
+        }));
+
+        await renderApp();
+        emitNoImageEligibility();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        // Bug 2 regression: the persisted images preference is dormant on an
+        // image-less page — no ZIP build, no blob download, nothing fires.
+        expect(chrome.runtime.sendMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ action: 'build_zip' }),
+        );
+        expect(createObjectURL).not.toHaveBeenCalled();
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+        expect(document.querySelector('h2')?.textContent).toContain('Content extracted');
+    });
+
+    it('auto-downloads only the plain .md when the page has no images but auto-download is on', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true, autoDownload: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true, markdown: '# Hello' });
+        const createObjectURL = vi.fn(() => 'blob:mock');
+        const revokeObjectURL = vi.fn();
+        vi.stubGlobal('URL', new Proxy(URL, {
+            get: (target, prop, receiver) => {
+                if (prop === 'createObjectURL') return createObjectURL;
+                if (prop === 'revokeObjectURL') return revokeObjectURL;
+                return Reflect.get(target, prop, receiver);
+            },
+        }));
+
+        await renderApp();
+        emitNoImageEligibility();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        // Plain .md via the popup blob path — NOT the service-worker zip path
+        expect(chrome.runtime.sendMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({ action: 'build_zip' }),
+        );
+        expect(createObjectURL).toHaveBeenCalled();
+    });
+
+    it('shows a single .md button (no split) on success when the page has no images', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true, markdown: '# Hello' });
+        vi.stubGlobal('fetch', vi.fn());
+
+        await renderApp();
+        emitNoImageEligibility();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        expect(document.body.textContent).toContain('.md');
+        expect(document.body.textContent).not.toContain('.md + images');
+        expect(document.body.textContent).not.toContain('Bundling');
+    });
+
+    it('reverts the split button to a single .md button when eligibility flips to no images', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true });
+        chrome.tabs.sendMessage.mockResolvedValue({
+            success: true,
+            markdown: '![Hero](https://e.com/hero.png)',
+        });
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))));
+
+        await renderApp();
+        emitEligibility(); // hasImages: true — images active
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const startButton = document.querySelector('button') as HTMLButtonElement;
+        await act(async () => { startButton.click(); });
+        await act(async () => { await new Promise(r => setTimeout(r, 100)); });
+
+        // The toggle auto-started the zip build; complete it and wait out the
+        // "Downloaded!" flash so the split button re-renders live.
+        const buildId = (chrome.runtime.sendMessage.mock.calls[0][0] as { buildId: string }).buildId;
+        emitMessage({ type: 'zip:done', buildId, downloaded: 'zip', totalImages: 1, bundledImages: 1, skippedImages: 0, filename: 'Example.zip' });
+        await act(async () => { await new Promise(r => setTimeout(r, 2050)); });
+        expect(document.body.textContent).toContain('.md + images');
+
+        // Mid-session eligibility down-flip: split reverts to single .md
+        emitNoImageEligibility();
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(document.body.textContent).not.toContain('.md + images');
+        expect(document.body.textContent).toContain('.md');
+    });
 });
 
 // ── Zip Build Progress Flow ──────────────────────────────────────────────────
