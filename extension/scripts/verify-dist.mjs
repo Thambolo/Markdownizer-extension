@@ -13,8 +13,8 @@
 //   3. modulepreload links in the popup HTML (Chromium "cross-world extension
 //      resource mismatch" / "preloaded but not used" console warnings).
 // Plus the end-to-end smoke test: the REAL built background chunk and the
-// REAL built offscreen chunk exchange messages over a mocked runtime bridge
-// with a real (fake-indexeddb) payload store.
+// REAL built offscreen chunk exchange messages over a mocked runtime bridge,
+// with the offscreen's blob download stubbed in node.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -77,9 +77,10 @@ if (existsSync(indexHtml) && readFileSync(indexHtml, 'utf8').includes('modulepre
   errors.push('index.html contains modulepreload links');
 }
 
-// 5. The offscreen document entry must exist in the build output. Assert a
-//    stable string literal that survives minification ('offscreen:build' is
-//    the message type the module handles), NOT minified identifiers like
+// 5. The offscreen document entry must exist in the build output. Assert
+//    stable string literals that survive minification ('offscreen:build' is
+//    the message type the module handles; 'createObjectURL' is the blob
+//    download the module triggers), NOT minified identifiers like
 //    buildZipResult. Walk the offscreen entry's transitive import graph so
 //    shared chunks are covered too.
 const offscreenHtml = join(distDir, 'offscreen.html');
@@ -102,27 +103,26 @@ else {
     for (const file of seen) contents.set(file, readFileSync(join(distDir, file), 'utf8'));
     const chunk = contents.get(chunkFile) ?? '';
     if (!chunk.includes('offscreen:build')) errors.push(`offscreen chunk ${chunkFile} missing the build handler`);
+    if (![...contents.values()].some((c) => c.includes('createObjectURL'))) errors.push(`offscreen chunk ${chunkFile} missing the blob download`);
   }
 }
 
 // 6. SW <-> offscreen smoke test: evaluate the REAL built background chunk
 //    and the REAL built offscreen chunk in a worker-like environment (node
 //    has no document/window, exactly like an MV3 service worker) and dispatch
-//    build_zip end-to-end: background -> offscreen build -> IndexedDB payload
-//    (fake-indexeddb) -> background download. Guards the module-evaluation
-//    failures of the remark stack (browser-condition entity decoder creating
-//    a DOM element at module scope) and Vite's preload machinery. Also proves
-//    the aliased entity decoder actually decodes (page.md must contain
-//    'Intro & more', not 'Intro  more').
+//    build_zip end-to-end: background -> offscreen build -> offscreen blob
+//    download (stubbed in node) -> finalize broadcast. Guards the
+//    module-evaluation failures of the remark stack (browser-condition entity
+//    decoder creating a DOM element at module scope) and Vite's preload
+//    machinery. Also proves the aliased entity decoder actually decodes
+//    (page.md must contain 'Intro & more', not 'Intro  more').
 if (!errors.length) {
   await swSmokeTest();
 }
 
 async function swSmokeTest() {
   const { pathToFileURL } = await import('node:url');
-  await import('fake-indexeddb/auto');
   const sessionData = {};
-  const downloads = [];
   const listeners = [];
   const sendMessageSpy = [];
 
@@ -165,7 +165,6 @@ async function swSmokeTest() {
         remove: async (keys) => { const list = Array.isArray(keys) ? keys : [keys]; for (const key of list) delete sessionData[key]; },
       },
     },
-    downloads: { download: async ({ url, filename }) => downloads.push({ url, filename }) },
     scripting: { executeScript: async () => [] },
   };
   globalThis.fetch = async () => new Response(new Uint8Array([1, 2, 3]));
@@ -175,6 +174,33 @@ async function swSmokeTest() {
     if (!offscreenEntry) { errors.push('SW smoke: offscreen entry missing'); return; }
     await import(pathToFileURL(join(distDir, offscreenEntry.file)).href); // -> listeners[0]
     await import(pathToFileURL(join(distDir, swEntry.file)).href);        // -> listeners[1]
+
+    // Stub the offscreen document + URL.createObjectURL AFTER the chunk
+    // imports: the offscreen chunk must evaluate at module scope without
+    // document/URL (the same guard as the real offscreen document), then the
+    // build_zip dispatch below downloads through the stubbed blob anchor.
+    const downloads = [];
+    const RealURL = globalThis.URL;
+    globalThis.URL = new Proxy(RealURL, {
+      get: (target, prop) => {
+        if (prop === 'createObjectURL') {
+          return (blob) => { downloads.push({ blob }); return 'blob:smoke'; };
+        }
+        if (prop === 'revokeObjectURL') return () => {};
+        return Reflect.get(target, prop);
+      },
+    });
+    globalThis.document = {
+      createElement: (tag) => {
+        const anchor = {
+          download: '',
+          href: '',
+          click: () => { if (downloads.length) downloads[downloads.length - 1].filename = anchor.download; },
+        };
+        return anchor;
+      },
+      body: { appendChild: () => {}, removeChild: () => {} },
+    };
 
     const response = await new Promise((resolve) => {
       listeners[1](
@@ -188,12 +214,12 @@ async function swSmokeTest() {
       errors.push(`SW smoke: build_zip failed (response=${JSON.stringify(response)})`);
       return;
     }
-    const { url, filename } = downloads[0];
-    if (!filename.endsWith('.zip') || !url.startsWith('data:application/zip;base64,')) {
-      errors.push(`SW smoke: unexpected download (${filename}, ${String(url).slice(0, 40)})`);
+    const { blob, filename } = downloads[0];
+    if (!filename.endsWith('.zip')) {
+      errors.push(`SW smoke: unexpected download filename (${filename})`);
       return;
     }
-    const bytes = new Uint8Array(Buffer.from(url.split(',')[1], 'base64'));
+    const bytes = new Uint8Array(await blob.arrayBuffer());
     const { unzipSync, strFromU8 } = await import('fflate');
     const files = unzipSync(bytes);
     const readme = strFromU8(files['README.md']);
@@ -216,5 +242,9 @@ if (errors.length > 0) {
   process.exit(1);
 }
 console.log(
-  `DIST VERIFY OK (popup entry: ${popupEntry?.file}, sw: ${swEntry?.file}, smoke: background -> offscreen -> IndexedDB -> download)`,
+  `DIST VERIFY OK (popup entry: ${popupEntry?.file}, sw: ${swEntry?.file}, smoke: background -> offscreen -> blob download -> finalize)`,
 );
+// Exit explicitly: the built offscreen/background chunks schedule 30 s
+// hold/revoke timers on success, which would otherwise keep node alive
+// after the smoke has already asserted everything.
+process.exit(0);
