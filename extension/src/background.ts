@@ -2,8 +2,6 @@ import { getOrCreateUserID } from './identity';
 import { mapHttpStatusToUserMessage } from './errors';
 import { collectCodeMirrorCaptureInMainWorld } from './codemirror-bridge';
 import type { CodeMirrorDocumentCapture } from './codemirror-bridge';
-import { bytesToDataUrl } from './base64';
-import { readPayload, deletePayload } from './idb-payload';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -175,12 +173,17 @@ let activeBuilds = 0;
  * recovery path) creates the in-flight promise; any later caller awaits the
  * claimer's ACTUAL outcome, so the response path reports the truth in every
  * interleaving — including when the recovery path settled before the
- * offscreen:build response arrived (the entry then survives the settle and
- * resolves to the recorded outcome, so a build is never downloaded twice in
- * one worker instance). Entries live for the instance's lifetime, like the
- * Set claim they replace; a restarted instance's recovery cannot collide
- * with the dead instance's response path (storage guard). */
-const finalizations = new Map<string, Promise<'done' | 'failed'>>();
+ * offscreen:build response arrived. Entries live for the instance's
+ * lifetime; a restarted instance's recovery cannot collide with the dead
+ * instance's response path (storage guard). The claim now guards double
+ * zip:done broadcasts (the download itself happens in the offscreen). */
+const finalizations = new Map<string, Promise<void>>();
+
+/** Last successful finalize timestamp: the offscreen document must stay
+ * alive for a hold window afterwards so an in-flight blob-anchor download
+ * can finish streaming (closing the document revokes its object URLs). */
+let lastFinalizeAt = 0;
+const OFFSCREEN_HOLD_MS = 30_000;
 
 interface ActiveZipBuildState {
     buildId?: string;
@@ -238,6 +241,13 @@ function ensureOffscreenDocument(): Promise<void> {
 function closeOffscreenDocumentIfIdle(): Promise<void> {
     return enqueueLifecycle(async () => {
         if (activeBuilds > 0) return;
+        if (Date.now() - lastFinalizeAt < OFFSCREEN_HOLD_MS) {
+            // A blob-anchor download from the offscreen document may still be
+            // streaming; closing the document would revoke its object URL.
+            // Retry after the hold window (the timer also keeps the SW alive).
+            setTimeout(() => { void closeOffscreenDocumentIfIdle(); }, OFFSCREEN_HOLD_MS);
+            return;
+        }
         await chrome.offscreen.closeDocument().catch(() => {});
     });
 }
@@ -255,20 +265,20 @@ interface ZipDoneMetadata {
 }
 
 /**
- * Single finalization funnel for a completed build (download + done broadcast
- * + state clear). Exactly one caller proceeds per build: the first caller
- * claims by creating the Map entry synchronously, so the primary response
- * path and the zip:completed recovery path cannot both download within one
- * worker instance; across instances, only the instance whose storage still
- * matches the buildId proceeds (the other finds the state cleared).
- * Resolves 'done' on a successful download, 'failed' otherwise — never
- * rejects, so the caller can await it and report the true outcome.
+ * Single finalization funnel for a completed build (done broadcast + state
+ * clear). The payload was already downloaded by the offscreen document; this
+ * only clears the tracked state and tells the popup the download started.
+ * Exactly one caller proceeds per build: the first caller claims by creating
+ * the Map entry synchronously, so the primary response path and the
+ * zip:completed recovery path cannot both broadcast within one worker
+ * instance; across instances, only the instance whose storage still matches
+ * the buildId proceeds (the other finds the state cleared).
  */
-async function finalizeBuild(buildId: string, metadata: ZipDoneMetadata): Promise<'done' | 'failed'> {
+async function finalizeBuild(buildId: string, metadata: ZipDoneMetadata): Promise<void> {
     const claimed = finalizations.get(buildId);
-    if (claimed) return await claimed;
+    if (claimed) return claimed;
 
-    const promise = (async (): Promise<'done' | 'failed'> => {
+    const promise = (async (): Promise<void> => {
         // Compare-and-clear INSIDE the serialized queue: remove the active
         // state only when it still belongs to this build, so a newer
         // build's state survives.
@@ -277,27 +287,16 @@ async function finalizeBuild(buildId: string, metadata: ZipDoneMetadata): Promis
                 await chrome.storage.session.remove('activeZipBuild').catch(() => {});
             }
         });
-        try {
-            const bytes = await readPayload(buildId);
-            const mime = metadata.downloaded === 'md' ? 'text/markdown' : 'application/zip';
-            await chrome.downloads.download({ url: bytesToDataUrl(bytes, mime), filename: metadata.filename });
-            broadcast({
-                type: 'zip:done',
-                buildId,
-                downloaded: metadata.downloaded,
-                totalImages: metadata.totalImages,
-                bundledImages: metadata.bundledImages,
-                skippedImages: metadata.skippedImages,
-                filename: metadata.filename,
-            });
-            return 'done';
-        } catch (err) {
-            console.error('Markdownizer zip finalization failed:', err);
-            broadcast({ type: 'zip:error', buildId, error: 'The download failed. Try again.' });
-            return 'failed';
-        } finally {
-            await deletePayload(buildId).catch(() => {});
-        }
+        broadcast({
+            type: 'zip:done',
+            buildId,
+            downloaded: metadata.downloaded,
+            totalImages: metadata.totalImages,
+            bundledImages: metadata.bundledImages,
+            skippedImages: metadata.skippedImages,
+            filename: metadata.filename,
+        });
+        lastFinalizeAt = Date.now();
     })();
 
     finalizations.set(buildId, promise);
@@ -345,22 +344,20 @@ async function handleBuildZip(request: BuildZipRequest, sendResponse: (response:
             throw new Error(result?.error || 'The download could not be built.');
         }
 
-        // The payload never travels in messages: it was stored in IndexedDB.
-        // The recovery path may already have finalized this build (its
-        // zip:completed broadcast can beat the response channel); the Map
-        // claim in finalizeBuild makes double downloads impossible and the
-        // returned outcome reflects the CLAIMER's result, so this response
-        // reports the truth in every interleaving.
-        const outcome = await finalizeBuild(buildId, {
+        // The payload never travels in messages: the offscreen downloads the
+        // built bytes directly via a blob anchor.
+        // The offscreen already downloaded the payload; finalize only
+        // clears state and broadcasts zip:done. Metadata only — never the
+        // payload.
+        await finalizeBuild(buildId, {
             downloaded: result.downloaded ?? 'md',
             filename: result.filename ?? 'download',
             totalImages: result.totalImages ?? 0,
             bundledImages: result.bundledImages ?? 0,
             skippedImages: result.skippedImages ?? 0,
         });
-        // Metadata only — never the payload.
         sendResponse({
-            success: outcome === 'done',
+            success: true,
             downloaded: result.downloaded,
             filename: result.filename,
             totalImages: result.totalImages,
@@ -382,7 +379,6 @@ async function handleBuildZip(request: BuildZipRequest, sendResponse: (response:
         broadcast({ type: 'zip:error', buildId, error: message });
         sendResponse({ success: false, error: message });
     } finally {
-        await deletePayload(buildId).catch(() => {});
         activeBuilds -= 1;
         await closeOffscreenDocumentIfIdle();
     }

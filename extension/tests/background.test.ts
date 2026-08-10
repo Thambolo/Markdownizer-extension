@@ -1,17 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 type RuntimeMessageListener = (
     request: unknown,
     sender: unknown,
     sendResponse: (response: unknown) => void
 ) => boolean | undefined;
-
-// The background reads/deletes the build payload from IndexedDB; the node
-// test environment has no real IndexedDB, so mock the payload store.
-vi.mock('../src/idb-payload', () => ({
-    readPayload: vi.fn(async () => new Uint8Array([1, 2, 3])),
-    deletePayload: vi.fn(async () => {}),
-}));
 
 describe('Background conversion request flow', () => {
     let messageListener: RuntimeMessageListener | undefined;
@@ -293,10 +286,14 @@ describe('Background offscreen zip build flow', () => {
         } as unknown as typeof chrome;
 
         global.fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))) as unknown as typeof fetch;
-        global.btoa = (input: string) => Buffer.from(input, 'binary').toString('base64');
     });
 
-    it('orchestrates offscreen build, downloads the payload, responds metadata-only', async () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('orchestrates offscreen build, responds metadata-only, defers the offscreen close', async () => {
+        vi.useFakeTimers();
         await import('../src/background');
         chrome.offscreen.createDocument.mockClear();
         chrome.runtime.getContexts.mockResolvedValue([]); // no document yet -> create
@@ -317,15 +314,17 @@ describe('Background offscreen zip build flow', () => {
         expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
             expect.objectContaining({ type: 'offscreen:build', buildId: 'b-1' }),
         );
-        const { readPayload } = await import('../src/idb-payload');
-        expect(readPayload).toHaveBeenCalledWith('b-1');
-        const [downloadArgs] = downloadsDownload.mock.calls[0] as [{ url: string; filename: string }];
-        expect(downloadArgs.filename).toBe('page.zip');
-        expect(downloadArgs.url.startsWith('data:application/zip;base64,')).toBe(true);
+        // The SW no longer downloads; it only finalizes state and broadcasts.
+        expect(chrome.downloads.download).not.toHaveBeenCalled();
         expect(sessionData.activeZipBuild).toBeUndefined();
         const doneMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:done');
         expect(doneMsgs.some((m) => m.buildId === 'b-1')).toBe(true);
+        // The document stays open so an in-flight blob download can finish;
+        // it closes after the 30 s hold window.
+        expect(chrome.offscreen.closeDocument).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(31_000);
         expect(chrome.offscreen.closeDocument).toHaveBeenCalled();
+        vi.useRealTimers();
     });
 
     it('reuses an existing offscreen document', async () => {
@@ -366,33 +365,28 @@ describe('Background offscreen zip build flow', () => {
         expect(sessionData.activeZipBuild).toMatchObject({ buildId: 'b-4', phase: 'fetch', fetched: 3, total: 10 });
     });
 
-    it('zip:completed recovery downloads only for a matching buildId (idempotent)', async () => {
+    it('zip:completed recovery broadcasts zip:done only for a matching buildId (idempotent)', async () => {
         await import('../src/background');
         sessionData.activeZipBuild = { buildId: 'b-live', phase: 'build', fetched: 0, total: 0, startedAt: 1 };
-        const { deletePayload } = await import('../src/idb-payload');
         messageListener!({ type: 'zip:completed', buildId: 'b-live', ok: true, downloaded: 'zip', filename: 'page.zip', totalImages: 2, bundledImages: 2, skippedImages: 0 }, {}, vi.fn());
         // The handler is dispatched fire-and-forget; flush the microtask chain
-        // before asserting the download/state effects.
+        // before asserting the broadcast/state effects.
         await new Promise((r) => setTimeout(r, 0));
-        expect(downloadsDownload).toHaveBeenCalledTimes(1);
-        expect(deletePayload).toHaveBeenCalledWith('b-live');
+        expect(chrome.downloads.download).not.toHaveBeenCalled();
         expect(sessionData.activeZipBuild).toBeUndefined();
         // The recovered zip:done broadcast carries the image counts for the popup note.
         const doneMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:done');
         expect(doneMsgs[0]).toMatchObject({ buildId: 'b-live', bundledImages: 2, totalImages: 2 });
         // A duplicate broadcast (storage already cleared) must be ignored.
-        downloadsDownload.mockClear();
         messageListener!({ type: 'zip:completed', buildId: 'b-live', ok: true, downloaded: 'zip', filename: 'page.zip', totalImages: 2, bundledImages: 2, skippedImages: 0 }, {}, vi.fn());
         await new Promise((r) => setTimeout(r, 0));
-        expect(downloadsDownload).not.toHaveBeenCalled();
+        expect(sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:done')).toHaveLength(1);
     });
 
-    it('does not double-download when recovery finalizes before the response path', async () => {
+    it('does not double-finalize when recovery finalizes before the response path', async () => {
         await import('../src/background');
         // Hold ONLY the offscreen:build response open so the recovery
-        // broadcast can land first. (The recovery path's zip:done broadcast
-        // also calls runtime.sendMessage — if it were held too, it would
-        // overwrite releaseResponse and the response path would hang.)
+        // broadcast can land first.
         let releaseResponse: (r: unknown) => void = () => {};
         chrome.runtime.sendMessage.mockImplementation((message: { type?: string }) =>
             message?.type === 'offscreen:build'
@@ -411,17 +405,23 @@ describe('Background offscreen zip build flow', () => {
         // Recovery finalizes first (storage matches).
         messageListener!({ type: 'zip:completed', buildId: 'b-race', ok: true, downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 }, {}, vi.fn());
         await new Promise((r) => setTimeout(r, 10));
-        expect(downloadsDownload).toHaveBeenCalledTimes(1);
-        // Now the response path resolves: the Set claim must prevent a second download.
+        const doneCount = () => sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:done' && m.buildId === 'b-race').length;
+        expect(doneCount()).toBe(1); // recovery broadcast it once
+        // Now the response path resolves: the Map claim must prevent a second finalize.
         releaseResponse({ ok: true, buildId: 'b-race', downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 });
         const response = await responsePromise;
         expect(response).toMatchObject({ success: true });
-        expect(downloadsDownload).toHaveBeenCalledTimes(1); // still exactly one
+        expect(doneCount()).toBe(1); // still exactly one zip:done
+        expect(chrome.downloads.download).not.toHaveBeenCalled();
     });
 
-    it('responds success: false when the download fails', async () => {
+    it('responds success: false when the offscreen build fails', async () => {
         await import('../src/background');
-        downloadsDownload.mockRejectedValueOnce(new Error('download failed'));
+        chrome.runtime.sendMessage.mockImplementation((message: { type?: string }) =>
+            message?.type === 'offscreen:build'
+                ? Promise.resolve({ ok: false, error: 'build exploded' })
+                : Promise.resolve({ ok: true, buildId: 'b-fail', downloaded: 'zip', filename: 'page.zip', totalImages: 1, bundledImages: 1, skippedImages: 0 }),
+        );
         const responsePromise = new Promise((resolve) => {
             messageListener!(
                 { action: 'build_zip', buildId: 'b-fail', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
@@ -433,9 +433,8 @@ describe('Background offscreen zip build flow', () => {
         expect(response).toMatchObject({ success: false });
         const errorMsgs = sendMessageSpy.mock.calls.map((c) => c[0]).filter((m) => m.type === 'zip:error');
         expect(errorMsgs.some((m) => m.buildId === 'b-fail')).toBe(true);
-        const { deletePayload } = await import('../src/idb-payload');
-        expect(deletePayload).toHaveBeenCalledWith('b-fail');
         expect(sessionData.activeZipBuild).toBeUndefined();
+        expect(chrome.downloads.download).not.toHaveBeenCalled();
     });
 
     it('zip:status reports active while a matching offscreen document exists', async () => {
