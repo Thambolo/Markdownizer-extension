@@ -1,10 +1,11 @@
 // offscreen.ts - Hidden offscreen document that executes ZIP builds.
 // Only the chrome.runtime extension API is available here. The produced
-// payload bytes are stored in IndexedDB (idb-payload) and never travel in
-// runtime messages; the service worker performs the download.
+// payload bytes are downloaded directly from this document via a blob URL
+// + anchor click (data: URLs through chrome.downloads would block the
+// browser UI thread for large payloads); the service worker only
+// finalizes state and broadcasts.
 
 import { buildZipResult } from './zip-build-service';
-import { savePayload } from './idb-payload';
 
 interface OffscreenBuildRequest {
     type: 'offscreen:build';
@@ -14,6 +15,27 @@ interface OffscreenBuildRequest {
         title: string;
         sourceUrl: string | null;
     };
+}
+
+/**
+ * Download bytes as a file via a blob URL + anchor click. Renderer-side
+ * download: the browser UI thread stays responsive (a data: URL through
+ * chrome.downloads blocks it for seconds on MB-scale payloads). The object
+ * URL is revoked after 30 s — the SW defers closing this document for the
+ * same window so the download can finish streaming the blob (closing the
+ * document would revoke its object URLs).
+ */
+function triggerBlobDownload(bytes: Uint8Array, downloaded: 'zip' | 'md', filename: string): void {
+    const mime = downloaded === 'zip' ? 'application/zip' : 'text/markdown';
+    const blob = new Blob([bytes], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
@@ -36,7 +58,9 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
                     }
                 },
             });
-            await savePayload(buildId, result.bytes);
+            // Download BEFORE responding: the SW closes this document after
+            // finalize, so the anchor click must happen while it is alive.
+            triggerBlobDownload(result.bytes, result.downloaded, result.filename);
             sendResponse({
                 ok: true,
                 buildId,
