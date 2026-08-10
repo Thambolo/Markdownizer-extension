@@ -3,7 +3,7 @@
 Turn any webpage into clean Markdown for your preferred LLM.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)]()
 
 Markdownizer turns the current page into clean, structured Markdown — docs, articles, and assignment briefs become high-quality context for ChatGPT, Claude, Gemini, or any LLM in one click.
 
