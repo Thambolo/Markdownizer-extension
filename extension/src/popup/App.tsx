@@ -450,18 +450,10 @@ export function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const openSettings = () => {
-    if (chrome.runtime.openOptionsPage) {
-      chrome.runtime.openOptionsPage();
-    } else {
-      window.open(chrome.runtime.getURL('options.html'));
-    }
-  };
-
     return (
       <div class="w-[320px] min-h-[400px] flex flex-col bg-slate-950 text-slate-100 font-['Inter'] selection:bg-indigo-500/30">
 
-        <Header openSettings={openSettings} />
+        <Header />
 
         {/* Main Content */}
         <main class="flex-1 flex flex-col p-6 items-center justify-center gap-6 relative">
