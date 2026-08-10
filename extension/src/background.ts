@@ -185,6 +185,10 @@ const finalizations = new Map<string, Promise<void>>();
 let lastFinalizeAt = 0;
 const OFFSCREEN_HOLD_MS = 30_000;
 
+/** Single coalesced re-arm timer for the hold-window retry, so N finalizes
+ * inside one window schedule at most one close attempt. */
+let holdTimer: ReturnType<typeof setTimeout> | null = null;
+
 interface ActiveZipBuildState {
     buildId?: string;
     phase?: string;
@@ -244,8 +248,16 @@ function closeOffscreenDocumentIfIdle(): Promise<void> {
         if (Date.now() - lastFinalizeAt < OFFSCREEN_HOLD_MS) {
             // A blob-anchor download from the offscreen document may still be
             // streaming; closing the document would revoke its object URL.
-            // Retry after the hold window (the timer also keeps the SW alive).
-            setTimeout(() => { void closeOffscreenDocumentIfIdle(); }, OFFSCREEN_HOLD_MS);
+            // Retry after the hold window (single coalesced timer). Best-
+            // effort: a service-worker idle-kill mid-hold orphans the
+            // document until the next build reuses it (matches handleZipStatus
+            // orphan semantics).
+            if (holdTimer === null) {
+                holdTimer = setTimeout(() => {
+                    holdTimer = null;
+                    void closeOffscreenDocumentIfIdle();
+                }, OFFSCREEN_HOLD_MS);
+            }
             return;
         }
         await chrome.offscreen.closeDocument().catch(() => {});
