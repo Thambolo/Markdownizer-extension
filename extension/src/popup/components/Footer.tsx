@@ -43,29 +43,33 @@ export function Footer({
           checked={captureFullPage}
           onChange={toggleCaptureFullPage}
         />
-        {iframeEligible && (
-          <Toggle
-            id="include-iframes-toggle"
-            label="Include iframes"
-            checked={includeIframes}
-            onChange={toggleIncludeIframes}
-          />
-        )}
-        {imagesEligible && (
-          <Toggle
-            id="include-images-toggle"
-            label="Download images"
-            description="Converts and auto-downloads the page with its images as a ZIP"
-            checked={includeImages}
-            onChange={toggleIncludeImages}
-          />
-        )}
+        <Toggle
+          id="include-iframes-toggle"
+          label="Include iframes"
+          description={iframeEligible ? undefined : 'No iframes on this page'}
+          checked={includeIframes}
+          onChange={toggleIncludeIframes}
+          disabled={!iframeEligible}
+        />
+        <Toggle
+          id="include-images-toggle"
+          label="Download images"
+          description={
+            imagesEligible
+              ? 'Converts and auto-downloads the page with its images as a ZIP'
+              : 'No images on this page'
+          }
+          checked={includeImages}
+          onChange={toggleIncludeImages}
+          disabled={!imagesEligible}
+        />
         <Toggle
           id="auto-download-toggle"
           label="Auto-download on success"
+          description={includeImages && imagesEligible ? 'Handled by Download images' : undefined}
           checked={autoDownload}
           onChange={toggleAutoDownload}
-          disabled={includeImages}
+          disabled={includeImages && imagesEligible}
         />
       </div>
     </footer>

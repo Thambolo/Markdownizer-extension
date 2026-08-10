@@ -1058,7 +1058,10 @@ describe('Capture full page toggle', () => {
             .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
             .find((message) => message.type === 'preview:inspect');
         expect(inspectMessage).toBeDefined();
-        expect(document.querySelector('#include-iframes-toggle')).toBeNull();
+        const iframeToggleBefore = document.querySelector('#include-iframes-toggle') as HTMLInputElement;
+        expect(iframeToggleBefore).not.toBeNull();
+        expect(iframeToggleBefore.disabled).toBe(true);
+        expect(document.body.textContent).toContain('No iframes on this page');
 
         port.emitMessage({
             type: 'preview:eligibility',
@@ -1075,7 +1078,9 @@ describe('Capture full page toggle', () => {
 
         const iframeToggle = document.querySelector('#include-iframes-toggle') as HTMLInputElement;
         expect(iframeToggle).not.toBeNull();
+        expect(iframeToggle.disabled).toBe(false);
         expect(iframeToggle.checked).toBe(true);
+        expect(document.body.textContent).not.toContain('No iframes on this page');
 
         port.postMessage.mockClear();
         await act(async () => {
@@ -1825,14 +1830,24 @@ describe('Download images toggle', () => {
         });
     }
 
-    it('is hidden until eligibility reports images', async () => {
+    it('disables the Download images toggle until eligibility reports images', async () => {
         chrome.storage.local.get.mockResolvedValue({});
         chrome.tabs.sendMessage.mockResolvedValue({ success: true });
         await renderApp();
-        expect(document.querySelector('#include-images-toggle')).toBeNull();
+
+        // Present-but-disabled with the reason, never hidden
+        const toggleBefore = document.querySelector('#include-images-toggle') as HTMLInputElement;
+        expect(toggleBefore).not.toBeNull();
+        expect(toggleBefore.disabled).toBe(true);
+        expect(document.body.textContent).toContain('No images on this page');
+
         emitEligibility(true);
         await act(async () => { await new Promise(r => setTimeout(r, 20)); });
-        expect(document.querySelector('#include-images-toggle')).not.toBeNull();
+
+        const toggle = document.querySelector('#include-images-toggle') as HTMLInputElement;
+        expect(toggle.disabled).toBe(false);
+        expect(document.body.textContent).toContain('Converts and auto-downloads the page with its images as a ZIP');
+        expect(document.body.textContent).not.toContain('No images on this page');
     });
 
     it('persists the choice to storage', async () => {
@@ -1930,7 +1945,7 @@ describe('Download images toggle', () => {
 
         // Page with NO root images: the only images live inside an eligible
         // iframe. The content script computed hasImages with includeIframes:
-        // false, so the images toggle must not appear yet.
+        // false, so the images toggle is present but disabled.
         const initial = inspectsOf();
         expect(initial).toHaveLength(1);
         port.emitMessage({
@@ -1942,6 +1957,9 @@ describe('Download images toggle', () => {
             hasImages: false,
         });
         await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        const imagesToggleDormant = document.querySelector('#include-images-toggle') as HTMLInputElement;
+        expect(imagesToggleDormant).not.toBeNull();
+        expect(imagesToggleDormant.disabled).toBe(true);
 
         // Auto-inclusion flips include-iframes false -> true: a re-inspection
         // must be sent, and it must carry includeIframes: true so the content
@@ -1962,7 +1980,9 @@ describe('Download images toggle', () => {
             hasImages: true,
         });
         await act(async () => { await new Promise(r => setTimeout(r, 20)); });
-        expect(document.querySelector('#include-images-toggle')).not.toBeNull();
+        const imagesToggleActive = document.querySelector('#include-images-toggle') as HTMLInputElement;
+        expect(imagesToggleActive).not.toBeNull();
+        expect(imagesToggleActive.disabled).toBe(false);
     });
 
     it('sends the current include-iframes state with every inspect', async () => {
@@ -2130,17 +2150,111 @@ describe('Download images toggle', () => {
         expect(autoDownloadWrites).toHaveLength(1);
     });
 
-    it('keeps the auto-download toggle disabled when Download images is ON but the page has no images', async () => {
+    it('enables the auto-download toggle when Download images is ON but the page has no images', async () => {
         chrome.storage.local.get.mockResolvedValue({ includeImages: true });
         chrome.tabs.sendMessage.mockResolvedValue({ success: true });
         await renderApp();
         await act(async () => { await new Promise(r => setTimeout(r, 20)); });
 
-        // No eligibility emitted: include-images toggle hidden, auto-download still disabled
-        expect(document.querySelector('#include-images-toggle')).toBeNull();
+        // No eligibility emitted: include-images toggle present, checked-but-greyed;
+        // auto-download enabled (the persisted images preference is dormant).
+        const imagesToggle = document.querySelector('#include-images-toggle') as HTMLInputElement;
+        expect(imagesToggle).not.toBeNull();
+        expect(imagesToggle.disabled).toBe(true);
+        expect(imagesToggle.checked).toBe(true);
         const autoDownloadToggle = document.querySelector('#auto-download-toggle') as HTMLInputElement;
         expect(autoDownloadToggle).not.toBeNull();
-        expect(autoDownloadToggle.disabled).toBe(true);
+        expect(autoDownloadToggle.disabled).toBe(false);
+        expect(document.body.textContent).toContain('No images on this page');
+        expect(document.body.textContent).not.toContain('Handled by Download images');
+    });
+
+    it('follows eligibility flips: images and auto-download disable only while images are active', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true, autoDownload: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+
+        const imagesToggle = () => document.querySelector('#include-images-toggle') as HTMLInputElement;
+        const autoToggle = () => document.querySelector('#auto-download-toggle') as HTMLInputElement;
+
+        // Eligibility reports no images: images toggle disabled, auto-download enabled
+        emitEligibility(false);
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(imagesToggle().disabled).toBe(true);
+        expect(autoToggle().disabled).toBe(false);
+        expect(document.body.textContent).toContain('No images on this page');
+
+        // Eligibility reports images: images toggle enabled, auto-download disabled
+        emitEligibility(true);
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(imagesToggle().disabled).toBe(false);
+        expect(autoToggle().disabled).toBe(true);
+        expect(document.body.textContent).toContain('Handled by Download images');
+        expect(document.body.textContent).not.toContain('No images on this page');
+
+        // Down-flip again: back to dormant
+        emitEligibility(false);
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(imagesToggle().disabled).toBe(true);
+        expect(autoToggle().disabled).toBe(false);
+    });
+
+    it('leaves the persisted includeImages preference untouched by eligibility changes', async () => {
+        chrome.storage.local.get.mockResolvedValue({ includeImages: true });
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+        emitEligibility(true);
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        emitEligibility(false);
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+
+        const includeImagesWrites = chrome.storage.local.set.mock.calls
+            .filter((call: unknown[]) => call[0] && 'includeImages' in (call[0] as Record<string, unknown>));
+        expect(includeImagesWrites).toHaveLength(0);
+    });
+
+    it('follows eligibility flips for iframes: disabled, enabled, disabled again with the reason', async () => {
+        chrome.storage.local.get.mockResolvedValue({});
+        chrome.tabs.sendMessage.mockResolvedValue({ success: true });
+        await renderApp();
+
+        const port = lastPort!;
+        const inspectsOf = () => port.postMessage.mock.calls
+            .map((call: unknown[]) => call[0] as { type?: string; sessionId?: string; generation?: number })
+            .filter((m) => m.type === 'preview:inspect');
+
+        const iframeToggle = () => document.querySelector('#include-iframes-toggle') as HTMLInputElement;
+        expect(iframeToggle().disabled).toBe(true);
+        expect(document.body.textContent).toContain('No iframes on this page');
+
+        // Eligible: enabled, reason gone
+        const initial = inspectsOf();
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: initial[0].sessionId,
+            captureMode: 'smart',
+            generation: initial[0].generation,
+            hasEligibleIframes: true,
+            hasImages: false,
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(iframeToggle().disabled).toBe(false);
+        expect(document.body.textContent).not.toContain('No iframes on this page');
+
+        // Down-flip: disabled again, reason back. The auto-inclusion flip
+        // triggered a re-inspection, so emit with the LATEST generation.
+        const latest = inspectsOf()[inspectsOf().length - 1];
+        port.emitMessage({
+            type: 'preview:eligibility',
+            sessionId: latest.sessionId,
+            captureMode: 'smart',
+            generation: latest.generation,
+            hasEligibleIframes: false,
+            hasImages: false,
+        });
+        await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+        expect(iframeToggle().disabled).toBe(true);
+        expect(document.body.textContent).toContain('No iframes on this page');
     });
 });
 
