@@ -1,3 +1,6 @@
+import contentScriptPath from '../content.ts?script';
+import contentStylePath from '../content-preview.css?url';
+
 import {
     PREVIEW_PORT_NAME,
     type CaptureMode,
@@ -36,24 +39,32 @@ const RETRY_INTERVAL_MS = 200;
 const MAX_RETRIES = 5;
 
 export async function injectContentScript(tabId: number): Promise<void> {
-    const contentScript = chrome.runtime.getManifest().content_scripts?.[0];
-    const contentScriptFile = contentScript?.js?.[0];
+    // Vite emits extension-relative paths for these imports. Strip a leading
+    // slash when running from an extension page so Chrome's scripting APIs get
+    // a path relative to the extension root. The manifest fallback keeps the
+    // test/dev mock path working when Vite does not process ?script imports.
+    const manifestContentScript = chrome.runtime.getManifest().content_scripts?.[0];
+    const scriptFile = (typeof contentScriptPath === 'string'
+        ? contentScriptPath
+        : manifestContentScript?.js?.[0])?.replace(/^\/+/, '');
+    const styleFile = (typeof contentStylePath === 'string'
+        ? contentStylePath
+        : manifestContentScript?.css?.[0])?.replace(/^\/+/, '');
 
-    if (!contentScriptFile) {
-        throw new Error('Content script configuration missing in manifest');
+    if (!scriptFile) {
+        throw new Error('Content script asset unavailable');
     }
 
-    const contentStyleFile = contentScript?.css?.[0];
-    if (contentStyleFile) {
+    if (styleFile) {
         await chrome.scripting.insertCSS({
             target: { tabId },
-            files: [contentStyleFile],
+            files: [styleFile],
         });
     }
 
     await chrome.scripting.executeScript({
         target: { tabId },
-        files: [contentScriptFile],
+        files: [scriptFile],
     });
 }
 
