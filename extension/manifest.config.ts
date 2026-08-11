@@ -20,7 +20,7 @@ const getDevExtensionKey = (env: Record<string, string>) => {
   return key ? { key } : {};
 };
 
-const { version, description } = packageJson;
+const { version } = packageJson;
 
 // Convert from SemVer (e.g. 0.1.0-beta.1) to Chrome version (e.g. 0.1.0.1)
 const [major, minor, patch, label = '0'] = version
@@ -36,9 +36,15 @@ export default defineManifest(async (env) => {
 
   return {
     manifest_version: 3,
-    name: env.mode === 'development' ? `[DEV] Markdownizer` : "HTML to Markdown Converter - Markdownizer",
+    // Localized via _locales/<locale>/messages.json (default_locale: en).
+    // Chrome resolves __MSG_*__ placeholders at runtime; the Chrome Web Store
+    // uses the resolved values for the listing title and summary. Development
+    // builds keep an explicit [DEV] prefix to distinguish them from
+    // production/unpacked installs.
+    name: env.mode === 'development' ? '[DEV] Markdownizer' : "__MSG_extensionName__",
     ...(env.mode === 'development' ? getDevExtensionKey(loadedEnv) : {}),
-    description,
+    description: "__MSG_extensionDescription__",
+    default_locale: "en",
     // up to four numbers separated by dots
     version: `${major}.${minor}.${patch}.${label}`,
     // semver is OK in "version_name"
@@ -68,7 +74,6 @@ export default defineManifest(async (env) => {
       service_worker: "src/background.ts",
       type: "module"
     },
-
     icons: {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
