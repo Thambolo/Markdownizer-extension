@@ -15,7 +15,7 @@ describe('Skeleton golden corpus', () => {
         const { html, tokens } = skeletonize(article);
         const values = Object.values(tokens);
 
-        expect(html).not.toContain('Site nav'); // header outside the root
+        expect(values).not.toContain('Home'); // header nav link text is outside the article root, so never tokenized
         expect(html).toContain('href="https://example.com/docs"');
         expect(html).toContain('<table>');
         expect(html).toContain('language-ts');
@@ -61,7 +61,7 @@ describe('Skeleton golden corpus', () => {
         expect(values).toContain('Pet identifier'); // schema dl description
         expect(html).toContain('<dl>'); // schema definition list
         expect(html).toContain('language-json'); // json viewer → fenced code
-        expect(html).not.toContain('Sidebar menu'); // .menu-content chrome removed
+        expect(values).not.toContain('Sidebar menu items'); // .menu-content nav text removed by removeChrome before tokenization
     });
 
     it('full round trip: token lookup by value and local rehydration', () => {

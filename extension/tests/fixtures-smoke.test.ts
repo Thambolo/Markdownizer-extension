@@ -10,4 +10,5 @@ it('inline fixtures are well-formed', () => {
 it('saved fixtures load from disk', async () => {
     expect((await loadFixture('redoc-page')).length).toBeGreaterThan(0);
     expect((await loadFixture('codemirror-page')).length).toBeGreaterThan(0);
+    expect((await loadFixture('long-article')).length).toBeGreaterThan(0);
 });
