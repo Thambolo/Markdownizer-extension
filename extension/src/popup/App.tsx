@@ -7,6 +7,8 @@ import { ActionButtons } from './components/ActionButtons';
 import { ZipProgressStrip } from './components/ZipProgressStrip';
 import { injectContentScript, openPreviewSession, type PreviewSession, isSupportedPageUrl } from './preview-session';
 import type { CaptureMode, PreviewEligibilityMessage } from '../shared/preview-protocol';
+import { normalizeZipPhase } from '../zip/protocol';
+import type { ActiveZipBuildState, ZipDoneBroadcast, ZipErrorBroadcast, ZipProgressBroadcast } from '../zip/protocol';
 import {
   applyIframeEligibility,
   initialIframeOptionState,
@@ -172,17 +174,17 @@ export function App() {
       if (msg.buildId !== (zipBuildRef.current?.buildId ?? lastBuildIdRef.current)) return;
 
       if (msg.type === 'zip:progress') {
-        const p = msg as { phase?: string; fetched?: number; total?: number };
+        const p = msg as ZipProgressBroadcast;
         const current = zipBuildRef.current;
         if (!current) return;
         setZipBuildState({
           ...current,
-          phase: p.phase === 'build' ? 'build' : 'fetch',
+          phase: normalizeZipPhase(p.phase),
           fetched: p.fetched ?? current.fetched,
           total: p.total ?? current.total,
         });
       } else if (msg.type === 'zip:done') {
-        const d = msg as { downloaded?: string; totalImages?: number; bundledImages?: number; skippedImages?: number };
+        const d = msg as ZipDoneBroadcast;
         setZipBuildState(null);
         setDownloaded(true);
         setTimeout(() => setDownloaded(false), 2000);
@@ -195,7 +197,7 @@ export function App() {
           setImagesNote(skipped > 0 ? `Included ${bundled} of ${total} images` : `Included ${bundled} images`);
         }
       } else if (msg.type === 'zip:error') {
-        const e = msg as { error?: string };
+        const e = msg as ZipErrorBroadcast;
         lastBuildIdRef.current = null;
         setZipBuildState(null);
         setImagesNote(e.error ?? 'Image bundling failed');
@@ -218,13 +220,11 @@ export function App() {
     const restore = async () => {
       try {
         const stored = await chrome.storage.session.get('activeZipBuild');
-        const state = stored.activeZipBuild as
-          | { buildId?: string; phase?: string; fetched?: number; total?: number }
-          | undefined;
+        const state = stored.activeZipBuild as ActiveZipBuildState | undefined;
         if (!state?.buildId || cancelled) return;
         setZipBuildState({
           buildId: state.buildId,
-          phase: state.phase === 'build' ? 'build' : 'fetch',
+          phase: normalizeZipPhase(state.phase),
           fetched: state.fetched ?? 0,
           total: state.total ?? 0,
         });
@@ -234,7 +234,7 @@ export function App() {
         if (response?.active) {
           setZipBuildState({
             buildId: response.buildId,
-            phase: response.phase === 'build' ? 'build' : 'fetch',
+            phase: normalizeZipPhase(response.phase),
             fetched: response.fetched ?? 0,
             total: response.total ?? 0,
           });

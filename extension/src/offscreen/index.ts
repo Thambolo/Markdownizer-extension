@@ -6,16 +6,8 @@
 // finalizes state and broadcasts.
 
 import { buildZipResult } from '../zip/build-service';
-
-interface OffscreenBuildRequest {
-    type: 'offscreen:build';
-    buildId: string;
-    payload: {
-        markdown: string;
-        title: string;
-        sourceUrl: string | null;
-    };
-}
+import { dispatchMessage, registerMessageHandler } from '../shared/messages';
+import type { OffscreenBuildMessage } from '../shared/messages';
 
 /**
  * Download bytes as a file via a blob URL + anchor click. Renderer-side
@@ -38,8 +30,8 @@ function triggerBlobDownload(bytes: Uint8Array<ArrayBuffer>, downloaded: 'zip' |
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
-    const request = message as OffscreenBuildRequest | null;
+registerMessageHandler('offscreen:build', (message, _sender, sendResponse) => {
+    const request = message as OffscreenBuildMessage | null;
     if (!request || typeof request !== 'object' || request.type !== 'offscreen:build') return;
 
     const { buildId, payload } = request;
@@ -92,3 +84,5 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
 
     return true; // async response
 });
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => dispatchMessage(request, sender, sendResponse));

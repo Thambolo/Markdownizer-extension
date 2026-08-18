@@ -15,6 +15,8 @@ import {
     type PreviewEligibilityMessage,
     type PreviewCommand,
 } from '../shared/preview-protocol';
+import { dispatchMessage, registerMessageHandler } from '../shared/messages';
+import type { ConvertPageMessage } from '../shared/messages';
 import type { CodeMirrorDocumentCapture } from '../extraction/codemirror-bridge';
 
 interface BackgroundConversionResponse {
@@ -314,27 +316,28 @@ chrome.runtime.onConnect.addListener((port) => {
 
 // ── Page Conversion (popup) ───────────────────────────────────────────────────
 
+registerMessageHandler('preview_ready', (_request, _sender, sendResponse) => {
+    sendResponse({ success: true });
+    return false; // Synchronous response
+});
+
+registerMessageHandler('convert_page', (request, _sender, sendResponse) => {
+    const msg = request as ConvertPageMessage;
+    processPage(
+        normalizeCaptureMode(msg.captureMode),
+        normalizeIncludeIframes(msg.includeIframes),
+    ).then(sendResponse).catch((err) => {
+        console.error("Markdownizer Error:", err);
+        // Default to technical message if userMessage is not set (for unexpected errors)
+        sendResponse({ success: false, error: err.message });
+    });
+    return true; // Keep channel open for async response
+});
+
 /**
  * Main Entry Point: Listen for messages from the popup
  */
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === "preview_ready") {
-        sendResponse({ success: true });
-        return false; // Synchronous response
-    }
-
-    if (request.action === "convert_page") {
-        processPage(
-            normalizeCaptureMode(request.captureMode),
-            normalizeIncludeIframes(request.includeIframes),
-        ).then(sendResponse).catch((err) => {
-            console.error("Markdownizer Error:", err);
-            // Default to technical message if userMessage is not set (for unexpected errors)
-            sendResponse({ success: false, error: err.message });
-        });
-        return true; // Keep channel open for async response
-    }
-});
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => dispatchMessage(request, sender, sendResponse));
 
 async function requestCodeMirrorCapture(): Promise<CodeMirrorDocumentCapture | null> {
     try {

@@ -2,33 +2,18 @@ import { getOrCreateUserID } from './identity';
 import { mapHttpStatusToUserMessage } from './errors';
 import { collectCodeMirrorCaptureInMainWorld } from '../extraction/codemirror-bridge';
 import type { CodeMirrorDocumentCapture } from '../extraction/codemirror-bridge';
+import { dispatchMessage, registerMessageHandler } from '../shared/messages';
+import type {
+    BuildZipMessage,
+    ConvertSkeletonMessage,
+    ZipCompletedBroadcast,
+    ZipProgressBroadcast,
+    ZipStatusMessage,
+} from '../shared/messages';
+import { normalizeZipPhase, withZipDoneDefaults } from '../zip/protocol';
+import type { ActiveZipBuildState, ZipDoneMetadata } from '../zip/protocol';
 
 const API_URL = import.meta.env.VITE_API_URL;
-
-interface ConvertSkeletonRequest {
-    action: "convert_skeleton";
-    payload: {
-        html_skeleton: string;
-        url: string;
-        client_type: "extension";
-        extraction_strategy: string;
-    };
-}
-
-interface BuildZipRequest {
-    action: 'build_zip';
-    buildId: string;
-    payload: {
-        markdown: string;
-        title: string;
-        sourceUrl: string | null;
-    };
-}
-
-interface ZipStatusRequest {
-    action: 'zip:status';
-    buildId: string;
-}
 
 interface ConversionResponse {
     markdown_skeleton: string;
@@ -41,68 +26,15 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     }
 });
 
-interface ReadCodeMirrorCaptureRequest {
-    action: 'read_codemirror_capture';
-}
-
 // ── Message routing ──────────────────────────────────────────────────────────
+// Every runtime message envelope lives in ../shared/messages; each handler
+// below is the previous inline listener body moved verbatim. The entry point
+// stays a plain chrome.runtime.onMessage listener so the addListener
+// contract (same registration shape, return value true = async keep-open) is
+// unchanged.
 
-chrome.runtime.onMessage.addListener((
-    request: ConvertSkeletonRequest | ReadCodeMirrorCaptureRequest | BuildZipRequest | ZipStatusRequest | ZipCompletedMessage | { type: 'zip:progress'; buildId: string },
-    sender,
-    sendResponse: (response: unknown) => void,
-) => {
-    // Type-only messages (broadcasts from the offscreen document or popup).
-    if ('type' in request) {
-        if (request.type === 'zip:completed' && typeof request.buildId === 'string') {
-            void handleZipCompleted(request as ZipCompletedMessage);
-            return false;
-        }
-        if (request.type === 'zip:progress' && typeof request.buildId === 'string') {
-            const p = request as { phase?: string; fetched?: number; total?: number };
-            // Compare-and-write INSIDE the serialized mutation queue: only
-            // write when no build owns the state yet or this build still
-            // owns it, so a stale build's late progress tick never clobbers
-            // a newer build's state (and the queue closes the read-check-
-            // write window storage.session cannot CAS).
-            void mutateZipBuild(async (current) => {
-                if (current && current.buildId !== request.buildId) return;
-                await chrome.storage.session
-                    .set({
-                        activeZipBuild: {
-                            buildId: request.buildId,
-                            startedAt: Date.now(),
-                            phase: p.phase === 'build' ? 'build' : 'fetch',
-                            fetched: p.fetched ?? 0,
-                            total: p.total ?? 0,
-                        },
-                    })
-                    .catch(() => {});
-            });
-            return false;
-        }
-        return;
-    }
-
-    // Action-based messages (unchanged routing below).
-    if (request.action === 'build_zip') {
-        handleBuildZip(request as BuildZipRequest, sendResponse);
-        return true;
-    }
-
-    if (request.action === 'zip:status') {
-        handleZipStatus(request as ZipStatusRequest, sendResponse);
-        return true;
-    }
-
-    if (request.action === 'read_codemirror_capture') {
-        handleReadCodeMirrorCapture(sender, sendResponse);
-        return true;
-    }
-
-    if (request.action !== 'convert_skeleton') return;
-
-    convertSkeleton((request as ConvertSkeletonRequest).payload)
+registerMessageHandler('convert_skeleton', (request, _sender, sendResponse) => {
+    convertSkeleton((request as ConvertSkeletonMessage).payload)
         .then((data) => sendResponse({ success: true, markdown_skeleton: data.markdown_skeleton }))
         .catch((err: unknown) => {
             console.error('Markdownizer API Error:', err);
@@ -112,6 +44,54 @@ chrome.runtime.onMessage.addListener((
 
     return true;
 });
+
+registerMessageHandler('build_zip', (request, _sender, sendResponse) => {
+    handleBuildZip(request as BuildZipMessage, sendResponse);
+    return true;
+});
+
+registerMessageHandler('zip:status', (request, _sender, sendResponse) => {
+    handleZipStatus(request as ZipStatusMessage, sendResponse);
+    return true;
+});
+
+registerMessageHandler('read_codemirror_capture', (_request, sender, sendResponse) => {
+    void handleReadCodeMirrorCapture(sender, sendResponse);
+    return true;
+});
+
+registerMessageHandler('zip:completed', (request) => {
+    if (typeof (request as { buildId?: unknown }).buildId !== 'string') return;
+    void handleZipCompleted(request as ZipCompletedBroadcast);
+    return false;
+});
+
+registerMessageHandler('zip:progress', (request) => {
+    const p = request as ZipProgressBroadcast;
+    if (typeof p.buildId !== 'string') return;
+    // Compare-and-write INSIDE the serialized mutation queue: only
+    // write when no build owns the state yet or this build still
+    // owns it, so a stale build's late progress tick never clobbers
+    // a newer build's state (and the queue closes the read-check-
+    // write window storage.session cannot CAS).
+    void mutateZipBuild(async (current) => {
+        if (current && current.buildId !== p.buildId) return;
+        await chrome.storage.session
+            .set({
+                activeZipBuild: {
+                    buildId: p.buildId,
+                    startedAt: Date.now(),
+                    phase: normalizeZipPhase(p.phase),
+                    fetched: p.fetched ?? 0,
+                    total: p.total ?? 0,
+                },
+            })
+            .catch(() => {});
+    });
+    return false;
+});
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => dispatchMessage(request, sender, sendResponse));
 
 async function handleReadCodeMirrorCapture(
     sender: chrome.runtime.MessageSender,
@@ -137,7 +117,7 @@ async function handleReadCodeMirrorCapture(
     }
 }
 
-async function convertSkeleton(payload: ConvertSkeletonRequest["payload"]): Promise<ConversionResponse> {
+async function convertSkeleton(payload: ConvertSkeletonMessage["payload"]): Promise<ConversionResponse> {
     const userID = await getOrCreateUserID();
 
     let response: Response;
@@ -188,14 +168,6 @@ const OFFSCREEN_HOLD_MS = 30_000;
 /** Single coalesced re-arm timer for the hold-window retry, so N finalizes
  * inside one window schedule at most one close attempt. */
 let holdTimer: ReturnType<typeof setTimeout> | null = null;
-
-interface ActiveZipBuildState {
-    buildId?: string;
-    phase?: string;
-    fetched?: number;
-    total?: number;
-    startedAt?: number;
-}
 
 let zipStateQueue: Promise<void> = Promise.resolve();
 
@@ -267,14 +239,6 @@ function closeOffscreenDocumentIfIdle(): Promise<void> {
 const broadcast = (message: Record<string, unknown>): void => {
     chrome.runtime.sendMessage(message).catch(() => {});
 };
-
-interface ZipDoneMetadata {
-    downloaded: 'zip' | 'md';
-    filename: string;
-    totalImages: number;
-    bundledImages: number;
-    skippedImages: number;
-}
 
 // ── Download-appearance watchdog ────────────────────────────────────────────
 // The offscreen document downloads the payload via a blob-anchor click, which
@@ -386,7 +350,7 @@ async function finalizeBuild(buildId: string, metadata: ZipDoneMetadata): Promis
     return promise;
 }
 
-async function handleBuildZip(request: BuildZipRequest, sendResponse: (response: unknown) => void): Promise<void> {
+async function handleBuildZip(request: BuildZipMessage, sendResponse: (response: unknown) => void): Promise<void> {
     const { buildId, payload } = request;
     const startedAt = Date.now();
     // Progress writes are monotonic fire-and-forget snapshots; the INITIAL
@@ -433,13 +397,13 @@ async function handleBuildZip(request: BuildZipRequest, sendResponse: (response:
         // The offscreen already downloaded the payload; finalize only
         // clears state and broadcasts zip:done. Metadata only — never the
         // payload.
-        await finalizeBuild(buildId, {
-            downloaded: result.downloaded ?? 'md',
-            filename: result.filename ?? 'download',
-            totalImages: result.totalImages ?? 0,
-            bundledImages: result.bundledImages ?? 0,
-            skippedImages: result.skippedImages ?? 0,
-        });
+        await finalizeBuild(buildId, withZipDoneDefaults({
+            downloaded: result.downloaded,
+            filename: result.filename,
+            totalImages: result.totalImages,
+            bundledImages: result.bundledImages,
+            skippedImages: result.skippedImages,
+        }));
         sendResponse({
             success: true,
             downloaded: result.downloaded,
@@ -468,18 +432,6 @@ async function handleBuildZip(request: BuildZipRequest, sendResponse: (response:
     }
 }
 
-interface ZipCompletedMessage {
-    type: 'zip:completed';
-    buildId: string;
-    ok: boolean;
-    downloaded?: 'zip' | 'md';
-    filename?: string;
-    totalImages?: number;
-    bundledImages?: number;
-    skippedImages?: number;
-    error?: string;
-}
-
 /**
  * Recovery path: the service worker may have been killed while the offscreen
  * document kept building. Process completion only when storage still matches
@@ -487,7 +439,7 @@ interface ZipCompletedMessage {
  * the Map claim makes it idempotent within an instance, and the storage
  * guard makes it idempotent across instances.
  */
-async function handleZipCompleted(message: ZipCompletedMessage): Promise<void> {
+async function handleZipCompleted(message: ZipCompletedBroadcast): Promise<void> {
     // Read-only early return (no mutation, so it stays outside the queue);
     // every mutation below runs as a queued compare-and-clear.
     const stored = await chrome.storage.session.get('activeZipBuild').catch(() => ({}));
@@ -506,19 +458,19 @@ async function handleZipCompleted(message: ZipCompletedMessage): Promise<void> {
         await closeOffscreenDocumentIfIdle();
         return;
     }
-    await finalizeBuild(message.buildId, {
-        downloaded: message.downloaded ?? 'md',
-        filename: message.filename ?? 'download',
-        totalImages: message.totalImages ?? 0,
-        bundledImages: message.bundledImages ?? 0,
-        skippedImages: message.skippedImages ?? 0,
-    });
+    await finalizeBuild(message.buildId, withZipDoneDefaults({
+        downloaded: message.downloaded,
+        filename: message.filename,
+        totalImages: message.totalImages,
+        bundledImages: message.bundledImages,
+        skippedImages: message.skippedImages,
+    }));
     // Close through the serialized lifecycle (respects the active counter so
     // a concurrently running build in this instance is never torn down).
     await closeOffscreenDocumentIfIdle();
 }
 
-async function handleZipStatus(request: ZipStatusRequest, sendResponse: (response: unknown) => void): Promise<void> {
+async function handleZipStatus(request: ZipStatusMessage, sendResponse: (response: unknown) => void): Promise<void> {
     // The read-check-remove runs INSIDE the serialized queue so the orphan
     // clear (and the mismatched-build clear below) cannot interleave with
     // another build's claim.
@@ -537,7 +489,7 @@ async function handleZipStatus(request: ZipStatusRequest, sendResponse: (respons
             sendResponse({
                 active: true,
                 buildId: state.buildId,
-                phase: state.phase === 'build' ? 'build' : 'fetch',
+                phase: normalizeZipPhase(state.phase),
                 fetched: state.fetched ?? 0,
                 total: state.total ?? 0,
             });
