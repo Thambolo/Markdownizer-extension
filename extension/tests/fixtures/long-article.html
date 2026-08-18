@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>The Long Article</title></head>
+<body>
+  <header><nav><a href="/">Home</a></nav></header>
+  <article>
+    <h1>Why Local Processing Matters for LLM Context</h1>
+    <p>When you copy a webpage into a prompt, you usually bring along the chrome: navigation, ads, and scripts. A skeletonizer strips all of that and keeps the structure.</p>
+    <h2>What survives</h2>
+    <ul>
+      <li>Headings become <code>#</code>, <code>##</code>, and friends.</li>
+      <li>Tables keep their columns.</li>
+      <li>Code blocks keep indentation.</li>
+    </ul>
+    <blockquote><p>Privacy by design means readable text never leaves the browser as readable text.</p></blockquote>
+    <h2>A worked example</h2>
+    <p>Consider this table of token limits:</p>
+    <table>
+      <thead><tr><th>Model</th><th>Context</th></tr></thead>
+      <tbody>
+        <tr><td>Model A</td><td>200k</td></tr>
+        <tr><td>Model B</td><td>1M</td></tr>
+      </tbody>
+    </table>
+    <h2>Code</h2>
+    <pre><code class="language-ts">export function hello(name: string): string {
+  return `Hello, ${name}!`;
+}</code></pre>
+    <p>Links like <a href="https://example.com/docs">this one</a> survive as markdown links.</p>
+  </article>
+  <footer>Copyright notice</footer>
+</body>
+</html>

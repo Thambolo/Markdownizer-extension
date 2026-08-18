@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Pets API Reference</title></head>
+<body>
+  <div id="redoc">
+    <div class="menu-content"><nav>Sidebar menu items</nav></div>
+    <div class="api-content">
+      <section data-section-id="tag/pets/paths/~1pets/get">
+        <div>
+          <button><span class="http-verb" type="get">get</span><span>/pets</span></button>
+          <div aria-hidden="true"><div role="button">https://api.example.com/v1</div></div>
+        </div>
+        <div class="redoc-json"><code>{ "pets": [{ "id": 1, "name": "Rex" }] }</code></div>
+        <h5>query Parameters</h5>
+        <table>
+          <tr><td kind="field">limit</td><td>integer</td></tr>
+        </table>
+        <h5>Response</h5>
+        <table>
+          <tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr>
+          <tr><td>id</td><td>integer</td><td>required</td><td>Pet identifier</td></tr>
+          <tr><td>name</td><td>string</td><td>optional</td><td>Display name</td></tr>
+        </table>
+      </section>
+    </div>
+  </div>
+</body>
+</html>
