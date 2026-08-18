@@ -125,7 +125,7 @@ describe('offscreen document handler', () => {
             expect(broadcasts.some((m) => m.type === 'zip:completed' && m.buildId === 'b-1' && m.ok === false)).toBe(true);
             expect(lastAnchor).toBeNull(); // nothing downloaded on failure
         } finally {
-            vi.doUnmock('../src/zip-build-service');
+            vi.doUnmock('../src/zip/build-service');
         }
     });
 

@@ -21,7 +21,7 @@ export function mapHttpStatusToUserMessage(status: number, technicalMsg: string)
             return "The request was invalid. Try refreshing the page.";
         case 403:
             return "Unauthorized request. Try reinstalling the extension.";
-        // Keep in sync with payload.ts MAX_SKELETON_BYTES (1 MiB).
+        // Keep in sync with content/payload.ts MAX_SKELETON_BYTES (1 MiB).
         case 413:
             return "This page is too large to convert (Limit: 1MB).";
         case 429:
