@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE } from '../src/content-preview';
-import { getBestContent, getVisibleBodyContent, getContentForMode, hasEligibleIframesByExtraction, selectCaptureRoot } from '../src/extractor';
-import { skeletonize } from '../src/logic';
+import { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE } from '../src/preview/content-preview';
+import { getBestContent, getVisibleBodyContent, getContentForMode, hasEligibleIframesByExtraction, selectCaptureRoot } from '../src/extraction/extractor';
+import { skeletonize } from '../src/skeleton/skeletonizer';
 
 // ── Stubs for ContentPreview browser APIs in JSDOM ───────────────────────────
 
@@ -414,7 +414,7 @@ describe('selectCaptureRoot', () => {
     });
 
     it('does not invoke recoverGeneratedText', async () => {
-        const { recoverGeneratedText } = await import('../src/generated-text');
+        const { recoverGeneratedText } = await import('../src/skeleton/generated-text');
         setupDOM('<body><main><p>Content</p></main></body>');
         const spy = vi.spyOn(recoverGeneratedText as { apply: (...args: unknown[]) => unknown }, 'apply');
         selectCaptureRoot('smart');

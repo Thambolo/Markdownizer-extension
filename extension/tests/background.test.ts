@@ -47,7 +47,7 @@ describe('Background conversion request flow', () => {
     });
 
     it('sends conversion requests from the background worker without spoofing Origin', async () => {
-        await import('../src/background');
+        await import('../src/background/index');
 
         expect(messageListener).toBeDefined();
 
@@ -147,7 +147,7 @@ describe('CodeMirror MAIN-world capture', () => {
         };
         executeScriptMock.mockResolvedValue([{ result: mockCapture }]);
 
-        await import('../src/background');
+        await import('../src/background/index');
 
         const responsePromise = new Promise((resolve) => {
             messageListener?.(
@@ -168,7 +168,7 @@ describe('CodeMirror MAIN-world capture', () => {
     });
 
     it('returns failure when sender has no tab id', async () => {
-        await import('../src/background');
+        await import('../src/background/index');
 
         const responsePromise = new Promise((resolve) => {
             messageListener?.(
@@ -185,7 +185,7 @@ describe('CodeMirror MAIN-world capture', () => {
     it('returns failure when executeScript rejects', async () => {
         executeScriptMock.mockRejectedValue(new Error('Cannot access tab'));
 
-        await import('../src/background');
+        await import('../src/background/index');
 
         const responsePromise = new Promise((resolve) => {
             messageListener?.(
@@ -201,7 +201,7 @@ describe('CodeMirror MAIN-world capture', () => {
     it('returns null capture when executeScript returns empty result', async () => {
         executeScriptMock.mockResolvedValue([]);
 
-        await import('../src/background');
+        await import('../src/background/index');
 
         const responsePromise = new Promise((resolve) => {
             messageListener?.(
@@ -295,7 +295,7 @@ describe('Background offscreen zip build flow', () => {
 
     it('orchestrates offscreen build, responds metadata-only, defers the offscreen close', async () => {
         vi.useFakeTimers();
-        await import('../src/background');
+        await import('../src/background/index');
         chrome.offscreen.createDocument.mockClear();
         chrome.runtime.getContexts.mockResolvedValue([]); // no document yet -> create
         const responsePromise = new Promise((resolve) => {
@@ -329,7 +329,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it('reuses an existing offscreen document', async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         chrome.runtime.getContexts.mockResolvedValue([{ contextType: 'OFFSCREEN_DOCUMENT' }]);
         const responsePromise = new Promise((resolve) => {
             messageListener!(
@@ -343,7 +343,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it('fails gracefully when the offscreen API is unsupported', async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         delete (global.chrome as { offscreen?: unknown }).offscreen;
         const responsePromise = new Promise((resolve) => {
             messageListener!(
@@ -358,7 +358,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it('relays offscreen zip:progress broadcasts to storage.session', async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         messageListener!({ type: 'zip:progress', buildId: 'b-4', phase: 'fetch', fetched: 3, total: 10 }, {}, vi.fn());
         // The relay compares against the current state first (async read),
         // so flush the microtask chain before asserting.
@@ -367,7 +367,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it('zip:completed recovery broadcasts zip:done only for a matching buildId (idempotent)', async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         sessionData.activeZipBuild = { buildId: 'b-live', phase: 'build', fetched: 0, total: 0, startedAt: 1 };
         messageListener!({ type: 'zip:completed', buildId: 'b-live', ok: true, downloaded: 'zip', filename: 'page.zip', totalImages: 2, bundledImages: 2, skippedImages: 0 }, {}, vi.fn());
         // The handler is dispatched fire-and-forget; flush the microtask chain
@@ -385,7 +385,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it('does not double-finalize when recovery finalizes before the response path', async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         // Hold ONLY the offscreen:build response open so the recovery
         // broadcast can land first.
         let releaseResponse: (r: unknown) => void = () => {};
@@ -417,7 +417,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it('responds success: false when the offscreen build fails', async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         chrome.runtime.sendMessage.mockImplementation((message: { type?: string }) =>
             message?.type === 'offscreen:build'
                 ? Promise.resolve({ ok: false, error: 'build exploded' })
@@ -439,7 +439,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it('zip:status reports active while a matching offscreen document exists', async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         sessionData.activeZipBuild = { buildId: 'b-live2', phase: 'build', fetched: 0, total: 0, startedAt: 1 };
         chrome.runtime.getContexts.mockResolvedValue([{ contextType: 'OFFSCREEN_DOCUMENT' }]);
         const statusPromise = new Promise((resolve) => {
@@ -451,7 +451,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it('zip:status clears stale state when no offscreen document exists', async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         sessionData.activeZipBuild = { buildId: 'b-stale', phase: 'fetch', fetched: 1, total: 2, startedAt: 1 };
         chrome.runtime.getContexts.mockResolvedValue([]); // orphaned: no document
         const statusPromise = new Promise((resolve) => {
@@ -463,7 +463,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it("stale build progress does not clobber a newer build's state", async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         sessionData.activeZipBuild = { buildId: 'b-new', phase: 'fetch', fetched: 1, total: 5, startedAt: 1 };
         // A late progress tick from an older build must be ignored: the
         // state now belongs to b-new.
@@ -477,7 +477,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it("an older build's failure does not clear a newer build's state", async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         // Hold the older build's offscreen:build request open so the newer
         // build can claim the shared state before the older build fails.
         let rejectOldBuild: (err: Error) => void = () => {};
@@ -506,7 +506,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it("stale progress enqueued before a new build claim still loses", async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         // Hold the new build's offscreen round-trip open so its claim is
         // still observable mid-flight (the queued ops below run first).
         let releaseBuild: (r: unknown) => void = () => {};
@@ -536,7 +536,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it("new build claim enqueued before stale progress still wins", async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         let releaseBuild: (r: unknown) => void = () => {};
         chrome.runtime.sendMessage.mockImplementation((message: { type?: string; buildId?: string }) =>
             message?.type === 'offscreen:build'
@@ -561,7 +561,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it("stale build failure cannot remove a newer claim", async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         sessionData.activeZipBuild = { buildId: 'b-new', phase: 'fetch', fetched: 1, total: 5, startedAt: 1 };
         // b-old fails BEFORE its initial write ever claims the state (the
         // offscreen document creation rejects), so the catch's compare-and-
@@ -581,7 +581,7 @@ describe('Background offscreen zip build flow', () => {
 
     it('broadcasts zip:error when no download item appears within the watch window', async () => {
         vi.useFakeTimers();
-        await import('../src/background');
+        await import('../src/background/index');
         const responsePromise = new Promise((resolve) => {
             messageListener!(
                 { action: 'build_zip', buildId: 'b-watch', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
@@ -603,7 +603,7 @@ describe('Background offscreen zip build flow', () => {
         search
             .mockResolvedValueOnce([]) // snapshot at build_zip arrival
             .mockResolvedValueOnce([{ id: 999, state: 'in_progress' }]); // first watchdog poll
-        await import('../src/background');
+        await import('../src/background/index');
         const responsePromise = new Promise((resolve) => {
             messageListener!(
                 { action: 'build_zip', buildId: 'b-watch2', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
@@ -626,7 +626,7 @@ describe('Background offscreen zip build flow', () => {
         search
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([{ id: 999, state: 'interrupted' }]);
-        await import('../src/background');
+        await import('../src/background/index');
         const responsePromise = new Promise((resolve) => {
             messageListener!(
                 { action: 'build_zip', buildId: 'b-watch3', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
@@ -647,7 +647,7 @@ describe('Background offscreen zip build flow', () => {
         search
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([{ id: 999, state: 'interrupted' }, { id: 1000, state: 'in_progress' }]);
-        await import('../src/background');
+        await import('../src/background/index');
         const responsePromise = new Promise((resolve) => {
             messageListener!(
                 { action: 'build_zip', buildId: 'b-watch4', payload: { markdown: '![a](https://e.com/a.png)', title: 'p', sourceUrl: null } },
@@ -665,7 +665,7 @@ describe('Background offscreen zip build flow', () => {
     it('recovery watchdog: zip:completed with no item broadcasts zip:error', async () => {
         vi.useFakeTimers();
         (chrome.downloads.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-        await import('../src/background');
+        await import('../src/background/index');
         sessionData.activeZipBuild = { buildId: 'b-recv', phase: 'build', fetched: 0, total: 0, startedAt: 1 };
         messageListener!({ type: 'zip:completed', buildId: 'b-recv', ok: true, downloaded: 'zip', filename: 'page.zip', totalImages: 2, bundledImages: 2, skippedImages: 0 }, {}, vi.fn());
         await vi.advanceTimersByTimeAsync(0);
@@ -679,7 +679,7 @@ describe('Background offscreen zip build flow', () => {
         vi.useFakeTimers();
         const search = chrome.downloads.search as ReturnType<typeof vi.fn>;
         search.mockResolvedValueOnce([{ id: 999, state: 'in_progress' }]);
-        await import('../src/background');
+        await import('../src/background/index');
         sessionData.activeZipBuild = { buildId: 'b-recv2', phase: 'build', fetched: 0, total: 0, startedAt: 1 };
         messageListener!({ type: 'zip:completed', buildId: 'b-recv2', ok: true, downloaded: 'zip', filename: 'page.zip', totalImages: 2, bundledImages: 2, skippedImages: 0 }, {}, vi.fn());
         await vi.advanceTimersByTimeAsync(0);
@@ -690,7 +690,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it('builds succeed when the downloads API is unavailable', async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         delete (global.chrome as { downloads?: unknown }).downloads;
         const responsePromise = new Promise((resolve) => {
             messageListener!(
@@ -705,7 +705,7 @@ describe('Background offscreen zip build flow', () => {
     });
 
     it('takes the download snapshot once per worker instance (overlapping builds)', async () => {
-        await import('../src/background');
+        await import('../src/background/index');
         const search = chrome.downloads.search as ReturnType<typeof vi.fn>;
         // Call 1 = the snapshot (must be EMPTY so 999 counts as new for the
         // watchdogs); calls 2+ = watchdog polls (the item exists).

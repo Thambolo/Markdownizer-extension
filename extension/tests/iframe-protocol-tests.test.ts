@@ -3,14 +3,14 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
     CONTENT_PREVIEW_HOST_ATTRIBUTE,
     READY_HIGHLIGHT_NAME,
-} from '../src/content-preview';
+} from '../src/preview/content-preview';
 
 const { skeletonizeMock } = vi.hoisted(() => ({
     skeletonizeMock: vi.fn(),
 }));
 
-vi.mock('../src/logic', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('../src/logic')>();
+vi.mock('../src/skeleton/skeletonizer', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../src/skeleton/skeletonizer')>();
     return { ...actual, skeletonize: skeletonizeMock };
 });
 
@@ -250,7 +250,7 @@ describe('Iframe protocol and controller tests', () => {
     describe('preview:show uses selectCaptureRoot', () => {
         it('uses semantic root for smart mode instead of getContentForMode', async () => {
             setupDOM('<body><article><h1>Article content</h1><p>Paragraph</p><img alt="diagram"></article></body>');
-            await import('../src/content');
+            await import('../src/content/index');
 
             const port = createMockPort('markdownizer-capture-preview');
             connectListener?.(port);
@@ -269,7 +269,7 @@ describe('Iframe protocol and controller tests', () => {
 
         it('uses document.body for full-page mode', async () => {
             setupDOM('<body><article><h1>Article</h1></article><aside>Sidebar</aside></body>');
-            await import('../src/content');
+            await import('../src/content/index');
 
             const port = createMockPort('markdownizer-capture-preview');
             connectListener?.(port);
@@ -283,10 +283,10 @@ describe('Iframe protocol and controller tests', () => {
 
         it('does not call getContentForMode for preview:show', async () => {
             setupDOM('<body><main><h1>Content</h1></main></body>');
-            await import('../src/content');
+            await import('../src/content/index');
 
             // Import and spy on getContentForMode
-            const extractor = await import('../src/extractor');
+            const extractor = await import('../src/extraction/extractor');
             const getContentForModeSpy = vi.spyOn(extractor, 'getContentForMode');
 
             const port = createMockPort('markdownizer-capture-preview');
@@ -302,7 +302,7 @@ describe('Iframe protocol and controller tests', () => {
     describe('preview:set-iframes command', () => {
         it('handles preview:set-iframes command', async () => {
             setupDOM('<body><main><h1>Content</h1><iframe src="https://example.com"></iframe></main></body>');
-            await import('../src/content');
+            await import('../src/content/index');
 
             const port = createMockPort('markdownizer-capture-preview');
             connectListener?.(port);
@@ -325,7 +325,7 @@ describe('Iframe protocol and controller tests', () => {
 
         it('ignores set-iframes from non-current generation', async () => {
             setupDOM('<body><main><h1>Content</h1><iframe src="https://example.com"></iframe></main></body>');
-            await import('../src/content');
+            await import('../src/content/index');
 
             const olderPort = createMockPort('markdownizer-capture-preview');
             connectListener?.(olderPort);
@@ -354,7 +354,7 @@ describe('Iframe protocol and controller tests', () => {
 
         it('set-iframes with enabled=true shows iframe preview', async () => {
             setupDOM('<body><main><h1>Content</h1><iframe src="https://example.com"></iframe></main></body>');
-            await import('../src/content');
+            await import('../src/content/index');
 
             const port = createMockPort('markdownizer-capture-preview');
             connectListener?.(port);
@@ -374,7 +374,7 @@ describe('Iframe protocol and controller tests', () => {
 
         it('set-iframes with enabled=false removes iframe preview', async () => {
             setupDOM('<body><main><h1>Content</h1><iframe src="https://example.com"></iframe></main></body>');
-            await import('../src/content');
+            await import('../src/content/index');
 
             const port = createMockPort('markdownizer-capture-preview');
             connectListener?.(port);
@@ -396,14 +396,14 @@ describe('Iframe protocol and controller tests', () => {
     describe('ContentPreview.setIncludeIframes idempotency', () => {
         it('does not recollect top-document targets when enabling iframes', async () => {
             setupDOM('<body><main><h1>Content</h1><iframe src="https://example.com"></iframe></main></body>');
-            await import('../src/content');
-            const { ContentPreview } = await import('../src/content-preview');
+            await import('../src/content/index');
+            const { ContentPreview } = await import('../src/preview/content-preview');
 
             const contentPreview = new ContentPreview();
             const main = document.querySelector('main') as HTMLElement;
 
             // Spy on collectContentPreviewTargets
-            const contentPreviewMod = await import('../src/content-preview');
+            const contentPreviewMod = await import('../src/preview/content-preview');
             const collectSpy = vi.spyOn(contentPreviewMod, 'collectContentPreviewTargets');
 
             // Show preview
@@ -421,8 +421,8 @@ describe('Iframe protocol and controller tests', () => {
 
         it('does not recreate the host when enabling iframes', async () => {
             setupDOM('<body><main><h1>Content</h1><img alt="diagram"></main></body>');
-            await import('../src/content');
-            const { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE } = await import('../src/content-preview');
+            await import('../src/content/index');
+            const { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE } = await import('../src/preview/content-preview');
 
             const contentPreview = new ContentPreview();
             const main = document.querySelector('main') as HTMLElement;
@@ -442,8 +442,8 @@ describe('Iframe protocol and controller tests', () => {
 
         it('is a no-op when setting same value twice', async () => {
             setupDOM('<body><main><h1>Content</h1></main></body>');
-            await import('../src/content');
-            const { ContentPreview } = await import('../src/content-preview');
+            await import('../src/content/index');
+            const { ContentPreview } = await import('../src/preview/content-preview');
 
             const contentPreview = new ContentPreview();
             const main = document.querySelector('main') as HTMLElement;
@@ -460,8 +460,8 @@ describe('Iframe protocol and controller tests', () => {
 
         it('does not call iframePreview.show when enabling iframes without root', async () => {
             setupDOM('<body><main><h1>Content</h1></main></body>');
-            await import('../src/content');
-            const { ContentPreview } = await import('../src/content-preview');
+            await import('../src/content/index');
+            const { ContentPreview } = await import('../src/preview/content-preview');
 
             const contentPreview = new ContentPreview();
 
@@ -476,7 +476,7 @@ describe('Iframe protocol and controller tests', () => {
     describe('Eligibility causes setIncludeIframes instead of another show', () => {
         it('eligibility message triggers setIncludeIframes, not preview:show', async () => {
             setupDOM('<body><main><h1>Content</h1><iframe src="https://example.com"></iframe></main></body>');
-            await import('../src/content');
+            await import('../src/content/index');
 
             const port = createMockPort('markdownizer-capture-preview');
             connectListener?.(port);

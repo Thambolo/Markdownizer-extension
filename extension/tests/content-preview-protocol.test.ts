@@ -4,14 +4,14 @@ import { JSDOM } from 'jsdom';
 import {
     CONTENT_PREVIEW_HOST_ATTRIBUTE,
     READY_HIGHLIGHT_NAME,
-} from '../src/content-preview';
+} from '../src/preview/content-preview';
 
 const { skeletonizeMock } = vi.hoisted(() => ({
     skeletonizeMock: vi.fn(),
 }));
 
-vi.mock('../src/logic', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('../src/logic')>();
+vi.mock('../src/skeleton/skeletonizer', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../src/skeleton/skeletonizer')>();
     return { ...actual, skeletonize: skeletonizeMock };
 });
 
@@ -282,7 +282,7 @@ describe('Content-script preview protocol', () => {
 
     it('creates overlay host on show and sets ready state', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -296,7 +296,7 @@ describe('Content-script preview protocol', () => {
 
     it('transitions to ready state', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -310,7 +310,7 @@ describe('Content-script preview protocol', () => {
 
     it('removes overlay on hide', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -324,7 +324,7 @@ describe('Content-script preview protocol', () => {
 
     it('removes overlay on owner disconnect', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -338,7 +338,7 @@ describe('Content-script preview protocol', () => {
 
     it('ignores stale port commands when newer generation owns overlay', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const olderPort = createMockPort('markdownizer-capture-preview');
         connectListener?.(olderPort);
@@ -361,7 +361,7 @@ describe('Content-script preview protocol', () => {
 
     it('ignores stale port commands to change state', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const olderPort = createMockPort('markdownizer-capture-preview');
         connectListener?.(olderPort);
@@ -384,7 +384,7 @@ describe('Content-script preview protocol', () => {
 
     it('does not create overlay for non-preview port names', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('some-other-port');
         connectListener?.(port);
@@ -396,7 +396,7 @@ describe('Content-script preview protocol', () => {
 
     it('succeeds with empty body (selectCaptureRoot falls back to body)', async () => {
         setupDOM('<body></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -415,7 +415,7 @@ describe('Content-script preview protocol', () => {
 
     it('responds with success to preview_ready on show', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -431,7 +431,7 @@ describe('Content-script preview protocol', () => {
 
     it('does not trigger convert_page on preview_ready', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -451,7 +451,7 @@ describe('Content-script preview protocol', () => {
 
     it('responds to preview_ready action via onMessage', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         // Verify the onMessage listener was registered
         expect(messageListener).toBeDefined();
@@ -472,7 +472,7 @@ describe('Content-script preview protocol', () => {
 
     it('highlights visible body content for a full-page preview', async () => {
         setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -486,7 +486,7 @@ describe('Content-script preview protocol', () => {
 
     it('uses semantic content for a smart preview', async () => {
         setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -500,7 +500,7 @@ describe('Content-script preview protocol', () => {
 
     it('reports iframe eligibility for the requested capture root and generation', async () => {
         setupDOM('<body><main><h1>Smart only</h1></main><aside>Outside main</aside></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -518,7 +518,7 @@ describe('Content-script preview protocol', () => {
 
     it('refreshes iframe eligibility when the selected root changes', async () => {
         setupDOM('<body><main><p>Main content</p></main><aside></aside></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -547,7 +547,7 @@ describe('Content-script preview protocol', () => {
 
     it('reports iframe images only when the inspect includes includeIframes', async () => {
         setupDOM('<body><main><h1>Smart only</h1><iframe></iframe></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -592,7 +592,7 @@ describe('Content-script preview protocol', () => {
         setupDOM('<body><main><h1>Smart only</h1><iframe></iframe></main></body>');
         RecordingMutationObserver.observedTargets = [];
         vi.stubGlobal('MutationObserver', RecordingMutationObserver);
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -645,7 +645,7 @@ describe('Content-script preview protocol', () => {
         setupDOM('<body><main><h1>Smart only</h1></main></body>');
         RecordingMutationObserver.observedTargets = [];
         vi.stubGlobal('MutationObserver', RecordingMutationObserver);
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -688,7 +688,7 @@ describe('Content-script preview protocol', () => {
 
     it('ignores mutations outside the current Smart root', async () => {
         setupDOM('<body><main><p>Main content</p></main><aside></aside></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -705,7 +705,7 @@ describe('Content-script preview protocol', () => {
 
     it('stops eligibility refreshes after the capture session disconnects', async () => {
         setupDOM('<body><main><p>Main content</p></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -720,7 +720,7 @@ describe('Content-script preview protocol', () => {
 
     it('accepts iframe inclusion only as an explicit boolean protocol value', async () => {
         setupDOM('<body><main><h1>Smart only</h1></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -736,7 +736,7 @@ describe('Content-script preview protocol', () => {
 
     it('converts a full-page request using the visible-body strategy', async () => {
         setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const response = await new Promise<unknown>((resolve) => {
             messageListener!(
@@ -755,7 +755,7 @@ describe('Content-script preview protocol', () => {
 
     it('passes captureMode full-page in the convert_page message', async () => {
         setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const sendRequest = new Promise<unknown>((resolve) => {
             messageListener!(
@@ -771,7 +771,7 @@ describe('Content-script preview protocol', () => {
 
     it('converts a default request without captureMode using semantic strategy', async () => {
         setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const response = await new Promise<unknown>((resolve) => {
             messageListener!(
@@ -791,9 +791,9 @@ describe('Content-script preview protocol', () => {
     it('rejects an oversized full-page conversion without Readability fallback', async () => {
         setupDOM('<body><main>Smart only</main><aside>Outside main</aside></body>');
         skeletonizeMock.mockReturnValue({ html: 'x'.repeat(1_048_577), tokens: [] });
-        const extractor = await import('../src/extractor');
+        const extractor = await import('../src/extraction/extractor');
         const readabilitySpy = vi.spyOn(extractor, 'getReadabilityContent');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const response = await new Promise<unknown>((resolve) => {
             messageListener!(
@@ -813,9 +813,9 @@ describe('Content-script preview protocol', () => {
     it('does not invoke Readability for full-page even when skeleton is below size limit', async () => {
         setupDOM('<body><main>Small content</main><aside>Also small</aside></body>');
         skeletonizeMock.mockReturnValue({ html: '<p>Tiny</p>', tokens: [] });
-        const extractor = await import('../src/extractor');
+        const extractor = await import('../src/extraction/extractor');
         const readabilitySpy = vi.spyOn(extractor, 'getReadabilityContent');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const response = await new Promise<unknown>((resolve) => {
             messageListener!(
@@ -835,9 +835,9 @@ describe('Content-script preview protocol', () => {
     ] as const)('rejects oversized capture with included iframe content in %s mode', async (mode) => {
         setupDOM('<body><main>Page content</main></body>');
         skeletonizeMock.mockReturnValue({ html: 'x'.repeat(1_048_577), tokens: [] });
-        const extractor = await import('../src/extractor');
+        const extractor = await import('../src/extraction/extractor');
         const readabilitySpy = vi.spyOn(extractor, 'getReadabilityContent');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const response = await new Promise<unknown>((resolve) => {
             messageListener!(
@@ -859,9 +859,9 @@ describe('Content-script preview protocol', () => {
 
     it('preview:inspect does not call getContentForMode (lightweight eligibility)', async () => {
         setupDOM('<body><main><h1>Smart only</h1></main></body>');
-        const extractor = await import('../src/extractor');
+        const extractor = await import('../src/extraction/extractor');
         const getContentForModeSpy = vi.spyOn(extractor, 'getContentForMode');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -887,7 +887,7 @@ describe('Content-script preview protocol', () => {
 
     it('full-page observer does not unconditionally refresh on non-iframe mutations', async () => {
         setupDOM('<body><main><p>Main content</p></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -910,7 +910,7 @@ describe('Content-script preview protocol', () => {
 
     it('full-page observer does refresh when an iframe is added', async () => {
         setupDOM('<body><main><p>Main content</p></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -937,7 +937,7 @@ describe('Content-script preview protocol', () => {
 
     it('stale generation inspect commands are ignored when a newer generation is active', async () => {
         setupDOM('<body><main><h1>Content</h1></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -961,7 +961,7 @@ describe('Content-script preview protocol', () => {
 
     it('preview host mutations do not trigger eligibility refresh', async () => {
         setupDOM('<body><main><p>Main content</p></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -989,7 +989,7 @@ describe('Content-script preview protocol', () => {
 
     it('mutation observer is scoped to the capture root, not the full document', async () => {
         setupDOM('<body><aside id="outside">Outside</aside><main><p>Main content</p></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -1017,7 +1017,7 @@ describe('Content-script preview protocol', () => {
 
     it('disconnect cleans up the mutation observer', async () => {
         setupDOM('<body><main><p>Main content</p></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -1034,7 +1034,7 @@ describe('Content-script preview protocol', () => {
 
     it('popup startup sends exactly one show and one inspect', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -1056,12 +1056,12 @@ describe('Content-script preview protocol', () => {
 
     it('preview show and inspect call zero conversion-grade extraction functions', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        const extractor = await import('../src/extractor');
-        const logic = await import('../src/logic');
+        const extractor = await import('../src/extraction/extractor');
+        const logic = await import('../src/skeleton/skeletonizer');
         const getContentForModeSpy = vi.spyOn(extractor, 'getContentForMode');
         const getReadabilityContentSpy = vi.spyOn(extractor, 'getReadabilityContent');
         const skeletonizeSpy = vi.spyOn(logic, 'skeletonize');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -1084,9 +1084,9 @@ describe('Content-script preview protocol', () => {
 
     it('eligibility mutations do not call getContentForMode', async () => {
         setupDOM('<body><main><p>Main content</p></main></body>');
-        const extractor = await import('../src/extractor');
+        const extractor = await import('../src/extraction/extractor');
         const getContentForModeSpy = vi.spyOn(extractor, 'getContentForMode');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -1115,7 +1115,7 @@ describe('Content-script preview protocol', () => {
 
     it('toggling iframe inclusion sends no top-level show', async () => {
         setupDOM('<body><main><h1>Hello</h1><img alt="diagram"></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -1137,7 +1137,7 @@ describe('Content-script preview protocol', () => {
 
     it('unrelated parent resource loads do not rebuild frame contexts', async () => {
         setupDOM('<body><main><iframe title="Frame1" srcdoc="<p>Frame1 text</p>"></iframe></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);
@@ -1158,7 +1158,7 @@ describe('Content-script preview protocol', () => {
 
     it('a single frame mutation rebuilds one context', async () => {
         setupDOM('<body><main><p>Main content</p></main></body>');
-        await import('../src/content');
+        await import('../src/content/index');
 
         const port = createMockPort('markdownizer-capture-preview');
         connectListener?.(port);

@@ -7,7 +7,7 @@ import {
     readSameOriginFrame,
     iframeLabel,
     hasEligibleIframesLightweight,
-} from '../src/iframe-capture';
+} from '../src/extraction/iframe-capture';
 
 // Mock owner document for tests that don't need JSDOM
 const mockOwnerDoc = { baseURI: 'https://example.com/' } as unknown as Document;
@@ -468,7 +468,7 @@ describe('hasImagesInRoot', () => {
 
     beforeEach(async () => {
         vi.resetModules();
-        const mod = await import('../src/iframe-capture');
+        const mod = await import('../src/extraction/iframe-capture');
         hasImagesInRoot = mod.hasImagesInRoot;
     });
 

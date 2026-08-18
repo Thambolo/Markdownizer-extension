@@ -1,11 +1,11 @@
-import contentScriptPath from '../content.ts?script';
-import contentStylePath from '../content-preview.css?url';
+import contentScriptPath from '../content/index.ts?script';
+import contentStylePath from '../preview/content-preview.css?url';
 
 import {
     PREVIEW_PORT_NAME,
     type CaptureMode,
     type PreviewEligibilityMessage,
-} from '../preview-protocol';
+} from '../shared/preview-protocol';
 
 // ── Public Types ──────────────────────────────────────────────────────────────
 

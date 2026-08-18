@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { rehydrateMarkdown, skeletonize } from '../src/logic';
-import { getReadabilityContent } from '../src/extractor';
+import { rehydrateMarkdown, skeletonize } from '../src/skeleton/skeletonizer';
+import { getReadabilityContent } from '../src/extraction/extractor';
 
 const styles: HTMLStyleElement[] = [];
 

@@ -2,7 +2,7 @@ import {
     IFRAME_MAX_DEPTH,
     createIframeBudget,
     readSameOriginFrame,
-} from './iframe-capture';
+} from '../extraction/iframe-capture';
 import { LOADING_HIGHLIGHT_NAME, READY_HIGHLIGHT_NAME } from './preview-highlights';
 
 const PREVIEW_STYLE_ATTRIBUTE = 'data-markdownizer-iframe-preview-style';

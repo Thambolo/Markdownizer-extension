@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { compactSkeleton } from '../src/skeleton-compactor';
+import { compactSkeleton } from '../src/skeleton/compactor';
 
 function rootFrom(html: string): HTMLElement {
     const dom = new JSDOM(`<main>${html}</main>`);

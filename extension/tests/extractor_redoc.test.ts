@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { getBestContent } from '../src/extractor';
-import { skeletonize } from '../src/logic';
+import { getBestContent } from '../src/extraction/extractor';
+import { skeletonize } from '../src/skeleton/skeletonizer';
 
 describe('Extractor - API documentation pages', () => {
     function setupDOM(html: string) {

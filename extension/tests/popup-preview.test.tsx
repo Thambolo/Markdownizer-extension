@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { PREVIEW_PORT_NAME, type CaptureMode, type PreviewEligibilityMessage } from '../src/preview-protocol';
+import { PREVIEW_PORT_NAME, type CaptureMode, type PreviewEligibilityMessage } from '../src/shared/preview-protocol';
 
 // CRXJS turns these imports into extension assets during a production build.
 // Vitest does not run that transform, so mock the asset paths to keep the
 // popup tests from executing the content script in the popup test environment.
-vi.mock("../src/content.ts?script", () => ({ default: "content.js" }));
-vi.mock("../src/content-preview.css?url", () => ({ default: "content.css" }));
+vi.mock("../src/content/index.ts?script", () => ({ default: "content.js" }));
+vi.mock("../src/preview/content-preview.css?url", () => ({ default: "content.css" }));
 
 // ── Chrome API Mocks ──────────────────────────────────────────────────────────
 

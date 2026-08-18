@@ -129,7 +129,7 @@ describe('Background zip build orchestration', () => {
             return undefined;
         };
         stubChrome(h);
-        await import('../src/background');
+        await import('../src/background/index');
     });
 
     afterEach(() => {

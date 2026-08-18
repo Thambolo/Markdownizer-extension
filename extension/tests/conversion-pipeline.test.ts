@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTICLE_PAGE, BODY_PAGE, EMPTY_PAGE, loadFixture } from './helpers/fixtures';
-import { skeletonize } from '../src/logic';
+import { skeletonize } from '../src/skeleton/skeletonizer';
 
 type RuntimeMessageListener = (
     request: unknown,
@@ -14,8 +14,8 @@ const { sizeDecisions } = vi.hoisted(() => ({ sizeDecisions: [] as boolean[] }))
 // Mock for the readability fallback so the chain is deterministic in jsdom.
 const { getReadabilityContentMock } = vi.hoisted(() => ({ getReadabilityContentMock: vi.fn() }));
 
-vi.mock('../src/payload', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('../src/payload')>();
+vi.mock('../src/content/payload', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../src/content/payload')>();
     return {
         ...actual,
         shouldUseReadability: (html: string) => {
@@ -25,8 +25,8 @@ vi.mock('../src/payload', async (importOriginal) => {
     };
 });
 
-vi.mock('../src/extractor', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('../src/extractor')>();
+vi.mock('../src/extraction/extractor', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../src/extraction/extractor')>();
     return { ...actual, getReadabilityContent: getReadabilityContentMock };
 });
 
@@ -76,7 +76,7 @@ describe('Conversion pipeline (processPage)', () => {
                 sendMessage: sendMessageMock,
             },
         };
-        await import('../src/content');
+        await import('../src/content/index');
     });
 
     afterEach(() => {
@@ -176,7 +176,7 @@ describe('Conversion pipeline (processPage)', () => {
         };
         cm.CodeMirror = { getValue: () => 'const a = 1;\nconst b = 2;' };
 
-        const { getContentForMode } = await import('../src/extractor');
+        const { getContentForMode } = await import('../src/extraction/extractor');
         const extraction = getContentForMode('smart');
         expect(extraction).not.toBeNull();
         const { html, tokens } = skeletonize(extraction!.element);

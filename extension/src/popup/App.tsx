@@ -6,7 +6,7 @@ import { StatusMessage } from './components/StatusMessage';
 import { ActionButtons } from './components/ActionButtons';
 import { ZipProgressStrip } from './components/ZipProgressStrip';
 import { injectContentScript, openPreviewSession, type PreviewSession, isSupportedPageUrl } from './preview-session';
-import type { CaptureMode, PreviewEligibilityMessage } from '../preview-protocol';
+import type { CaptureMode, PreviewEligibilityMessage } from '../shared/preview-protocol';
 import {
   applyIframeEligibility,
   initialIframeOptionState,

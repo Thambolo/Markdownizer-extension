@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { rehydrateMarkdown, skeletonize } from '../src/logic';
+import { rehydrateMarkdown, skeletonize } from '../src/skeleton/skeletonizer';
 import { ARTICLE_PAGE, MAIN_PAGE, loadFixture } from './helpers/fixtures';
 
 function setupDom(html: string): HTMLElement {

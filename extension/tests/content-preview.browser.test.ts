@@ -10,7 +10,7 @@ import {
     CONTENT_PREVIEW_HOST_ATTRIBUTE,
     READY_HIGHLIGHT_NAME,
     LOADING_HIGHLIGHT_NAME,
-} from '../src/content-preview';
+} from '../src/preview/content-preview';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

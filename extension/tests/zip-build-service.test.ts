@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildZipResult } from '../src/zip-build-service';
+import { buildZipResult } from '../src/zip/build-service';
 
 describe('buildZipResult', () => {
     const originalFetch = globalThis.fetch;
@@ -39,7 +39,7 @@ describe('buildZipResult', () => {
 
     it('has no chrome references in the module graph', async () => {
         const fs = await import('node:fs');
-        const source = fs.readFileSync(new URL('../src/zip-build-service.ts', import.meta.url), 'utf8');
+        const source = fs.readFileSync(new URL('../src/zip/build-service.ts', import.meta.url), 'utf8');
         expect(source).not.toMatch(/chrome\./);
     });
 });

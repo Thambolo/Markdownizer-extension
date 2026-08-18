@@ -71,7 +71,7 @@ export default defineManifest(async (env) => {
       }
     },
     background: {
-      service_worker: "src/background.ts",
+      service_worker: "src/background/index.ts",
       type: "module"
     },
     icons: {

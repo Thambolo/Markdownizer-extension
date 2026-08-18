@@ -3,7 +3,7 @@
 // runtime extension API. The produced bytes are downloaded directly by the
 // offscreen document via a blob anchor.
 
-import { buildZipBlob, type ZipBuildProgress } from './popup/zip-download';
+import { buildZipBlob, type ZipBuildProgress } from './download';
 
 export interface ZipBuildResult {
     downloaded: 'zip' | 'md';

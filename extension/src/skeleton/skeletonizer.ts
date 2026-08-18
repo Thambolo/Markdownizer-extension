@@ -3,7 +3,7 @@
 import { normalizeRenderedReDoc } from './redoc-normalizer';
 import { recoverGeneratedText } from './generated-text';
 import { serializeNativeControls } from './native-controls';
-import { compactSkeleton } from './skeleton-compactor';
+import { compactSkeleton } from './compactor';
 import { remark } from 'remark';
 import remarkGfm from 'remark-gfm';
 import remarkStringify from 'remark-stringify';

@@ -1,7 +1,7 @@
 import { getOrCreateUserID } from './identity';
 import { mapHttpStatusToUserMessage } from './errors';
-import { collectCodeMirrorCaptureInMainWorld } from './codemirror-bridge';
-import type { CodeMirrorDocumentCapture } from './codemirror-bridge';
+import { collectCodeMirrorCaptureInMainWorld } from '../extraction/codemirror-bridge';
+import type { CodeMirrorDocumentCapture } from '../extraction/codemirror-bridge';
 
 const API_URL = import.meta.env.VITE_API_URL;
 

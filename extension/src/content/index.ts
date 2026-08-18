@@ -1,21 +1,21 @@
-import './content-preview.css';
-import { getContentForMode, getReadabilityContent, selectCaptureRoot } from './extractor';
+import '../preview/content-preview.css';
+import { getContentForMode, getReadabilityContent, selectCaptureRoot } from '../extraction/extractor';
 import {
     hasEligibleIframesLightweight,
     hasImagesInRoot,
     readSameOriginFrame,
     IFRAME_MAX_COUNT,
-} from './iframe-capture';
-import { skeletonize, rehydrateMarkdown } from './logic';
+} from '../extraction/iframe-capture';
+import { skeletonize, rehydrateMarkdown } from '../skeleton/skeletonizer';
 import { shouldUseReadability } from './payload';
-import { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE } from './content-preview';
+import { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE } from '../preview/content-preview';
 import {
     PREVIEW_PORT_NAME,
     type CaptureMode,
     type PreviewEligibilityMessage,
     type PreviewCommand,
-} from './preview-protocol';
-import type { CodeMirrorDocumentCapture } from './codemirror-bridge';
+} from '../shared/preview-protocol';
+import type { CodeMirrorDocumentCapture } from '../extraction/codemirror-bridge';
 
 interface BackgroundConversionResponse {
     success: boolean;

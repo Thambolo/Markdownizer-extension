@@ -10,7 +10,7 @@ import {
     buildZipBlob,
     DEFAULT_TIMEOUT_MS,
     DEFAULT_CONCURRENCY,
-} from '../src/popup/zip-download';
+} from '../src/zip/download';
 
 describe('collectImageNodes', () => {
     it('finds image nodes with positions', () => {

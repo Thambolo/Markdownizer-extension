@@ -149,7 +149,7 @@ function setupDOM(html: string): void {
 
 // ── Import the function under test ─────────────────────────────────────────────
 
-import { collectContentPreviewTargets } from '../src/content-preview';
+import { collectContentPreviewTargets } from '../src/preview/content-preview';
 
 // ── Prototype hygiene: save originals before each test, restore after ─────────
 
@@ -368,7 +368,7 @@ describe('collectContentPreviewTargets', () => {
 
 // ── ContentPreview host/box overlay tests ────────────────────────────────────
 
-import { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE, READY_HIGHLIGHT_NAME, LOADING_HIGHLIGHT_NAME } from '../src/content-preview';
+import { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE, READY_HIGHLIGHT_NAME, LOADING_HIGHLIGHT_NAME } from '../src/preview/content-preview';
 
 describe('ContentPreview host and box overlay', () => {
     beforeEach(() => {

@@ -5,7 +5,7 @@
 // browser UI thread for large payloads); the service worker only
 // finalizes state and broadcasts.
 
-import { buildZipResult } from './zip-build-service';
+import { buildZipResult } from '../zip/build-service';
 
 interface OffscreenBuildRequest {
     type: 'offscreen:build';

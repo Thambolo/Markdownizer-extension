@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { getBestContent, getVisibleBodyContent } from '../src/extractor';
-import { skeletonize } from '../src/logic';
+import { getBestContent, getVisibleBodyContent } from '../src/extraction/extractor';
+import { skeletonize } from '../src/skeleton/skeletonizer';
 
 const testStyles: HTMLStyleElement[] = [];
 

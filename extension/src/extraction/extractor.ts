@@ -1,7 +1,7 @@
 import { Readability } from './readability.js';
-import { recoverGeneratedText } from './generated-text.js';
-import { serializeNativeControls } from './native-controls';
-import type { CaptureMode } from './preview-protocol.js';
+import { recoverGeneratedText } from '../skeleton/generated-text.js';
+import { serializeNativeControls } from '../skeleton/native-controls';
+import type { CaptureMode } from '../shared/preview-protocol.js';
 import type { CodeMirrorDocumentCapture } from './codemirror-bridge';
 import {
     bodyRelativePath,

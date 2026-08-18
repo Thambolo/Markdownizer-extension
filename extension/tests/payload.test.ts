@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_SKELETON_BYTES, shouldUseReadability, skeletonSize } from '../src/payload';
+import { MAX_SKELETON_BYTES, shouldUseReadability, skeletonSize } from '../src/content/payload';
 
 describe('payload sizing', () => {
     it('measures skeletons as UTF-8 bytes', () => {
