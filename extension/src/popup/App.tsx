@@ -8,7 +8,8 @@ import { ZipProgressStrip } from './components/ZipProgressStrip';
 import { injectContentScript, openPreviewSession, type PreviewSession, isSupportedPageUrl } from './preview-session';
 import type { CaptureMode, PreviewEligibilityMessage } from '../shared/preview-protocol';
 import { normalizeZipPhase } from '../zip/protocol';
-import type { ActiveZipBuildState, ZipDoneBroadcast, ZipErrorBroadcast, ZipProgressBroadcast } from '../zip/protocol';
+import type { ActiveZipBuildState } from '../zip/protocol';
+import type { ZipDoneBroadcast, ZipErrorBroadcast, ZipProgressBroadcast } from '../shared/messages';
 import {
   applyIframeEligibility,
   initialIframeOptionState,
