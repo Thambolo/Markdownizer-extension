@@ -493,6 +493,7 @@ describe('usePreviewSession', () => {
             previewEnabled = enabled;
             api = usePreviewSession({
                 captureModeRef: mode,
+                setCaptureMode: (next) => { mode.current = next; },
                 previewEnabled: enabled,
                 setPreviewEnabled: setEnabled,
                 onIframeOptionChange,

@@ -1,11 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { createSkeletonPipeline } from '../src/skeleton/pipeline';
-import { skeletonize } from '../src/skeleton/skeletonizer';
-import { recoverGeneratedText } from '../src/skeleton/generated-text';
-import { serializeNativeControls } from '../src/skeleton/native-controls';
-import { normalizeRenderedReDoc } from '../src/skeleton/redoc-normalizer';
-import { compactSkeleton } from '../src/skeleton/compactor';
+import { SKELETON_PIPELINE, skeletonize } from '../src/skeleton/skeletonizer';
 import { ARTICLE_PAGE, MAIN_PAGE } from './helpers/fixtures';
 
 function setupDom(html: string): HTMLElement {
@@ -33,29 +29,30 @@ describe('createSkeletonPipeline', () => {
         expect(second).toHaveBeenCalledWith(root, clone);
     });
 
-    it('composing the four real transforms matches skeletonize output for order-insensitive fixtures', () => {
-        // Current pipeline order (pre-reorder): the contract that process()
-        // applies these four transforms in sequence to (source, clone) and
-        // then tokenizes. normalizeRenderedReDoc and compactSkeleton only
-        // mutate the element they are passed, so they must be wired to the
-        // CLONE (the bare module references would be handed the live source
-        // root by the pipeline and mutate the live page). Article/main
-        // fixtures carry no buttons, inputs, or pseudo-element text, so they
-        // are order-insensitive: they must match skeletonize both before and
-        // after the normalizeRenderedReDoc move.
-        const pipeline = createSkeletonPipeline([
-            recoverGeneratedText,
-            (_root: HTMLElement, clone: HTMLElement) => { normalizeRenderedReDoc(clone); },
-            serializeNativeControls,
-            (_root: HTMLElement, clone: HTMLElement) => { compactSkeleton(clone); },
-        ]);
-
+    it('production SKELETON_PIPELINE output matches skeletonize for order-insensitive fixtures', () => {
+        // ACTUAL production order (locked behaviorally by the redoc golden test):
+        // 1. recoverGeneratedText
+        // 2. normalizeRenderedReDoc
+        // 3. serializeNativeControls
+        // 4. compactSkeleton
+        //
+        // This test consumes the exported SKELETON_PIPELINE constant — the very
+        // pipeline process() runs — instead of re-declaring the composition, so
+        // a future reorder inside skeletonizer.ts changes what this test locks
+        // instead of silently drifting from the production order.
+        // normalizeRenderedReDoc and compactSkeleton only mutate the element
+        // they are passed, so they are wired to the CLONE (the bare module
+        // references would be handed the live source root by the pipeline and
+        // mutate the live page). Article/main fixtures carry no buttons,
+        // inputs, or pseudo-element text, so they are order-insensitive: they
+        // must match skeletonize both before and after the normalizeRenderedReDoc
+        // move.
         for (const [name, html] of [['article', ARTICLE_PAGE.html], ['main', MAIN_PAGE.html]] as const) {
             const body = setupDom(html);
             const root = body.querySelector(name === 'article' ? 'article' : 'main') as HTMLElement;
             const clone = root.cloneNode(true) as HTMLElement;
 
-            pipeline(root, clone);
+            SKELETON_PIPELINE(root, clone);
 
             // Tokenize the pipeline output exactly the way process() does.
             const viaPipeline = skeletonize(clone);

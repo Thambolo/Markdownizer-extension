@@ -15,12 +15,13 @@ import {
  * into the conversion refs via onIframeOptionChange/onImagesEligibleChange). */
 export function usePreviewSession(options: {
     captureModeRef: { current: CaptureMode };
+    setCaptureMode: (next: CaptureMode) => void;
     previewEnabled: boolean;
     setPreviewEnabled: (next: boolean) => void;
     onIframeOptionChange: (next: IframeOptionState) => void;
     onImagesEligibleChange: (eligible: boolean) => void;
 }) {
-    const { captureModeRef, previewEnabled, setPreviewEnabled, onIframeOptionChange, onImagesEligibleChange } = options;
+    const { captureModeRef, setCaptureMode, previewEnabled, setPreviewEnabled, onIframeOptionChange, onImagesEligibleChange } = options;
     const sessionRef = useRef<PreviewSession | null>(null);
     const inspectionGenerationRef = useRef(0);
     const [iframeOption, setIframeOption] = useState<IframeOptionState>(initialIframeOptionState);
@@ -152,7 +153,11 @@ export function usePreviewSession(options: {
         const target = e.target as HTMLInputElement;
         const newValue = target.checked;
         const newMode: CaptureMode = newValue ? 'full-page' : 'smart';
+        // State + ref update atomically in one toggle call: the App's footer
+        // checkbox reads the state, session/conversion read the ref, so a
+        // consumer calling this toggle directly can never render stale state.
         captureModeRef.current = newMode;
+        setCaptureMode(newMode);
 
         // If preview is enabled and session exists, show with new mode immediately
         if (previewEnabledRef.current && sessionRef.current) {

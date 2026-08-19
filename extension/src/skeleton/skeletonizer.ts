@@ -42,7 +42,8 @@ export function skeletonize(root: HTMLElement): { html: string, tokens: TokenMap
 // (normalizeRenderedReDoc, compactSkeleton) are wrapped here so they
 // operate on the CLONE — passing the bare module references would hand
 // them the live source root instead and mutate the live page.
-const SKELETON_PIPELINE = createSkeletonPipeline([
+/** The production skeleton pipeline. Exported so tests lock the real order. */
+export const SKELETON_PIPELINE = createSkeletonPipeline([
     recoverGeneratedText,
     (_root: HTMLElement, clone: HTMLElement) => { normalizeRenderedReDoc(clone); },
     serializeNativeControls,

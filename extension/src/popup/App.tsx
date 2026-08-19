@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { StatusOrb } from './components/StatusOrb';
@@ -42,12 +42,19 @@ export function App() {
     })();
   }, []);
 
+  // Stable identities: the preview hook registers handleIframeEligibility
+  // (a useCallback keyed on these) with the session listener, so recreating
+  // them per render would churn that callback on every popup re-render.
+  const onIframeOptionChange = useCallback((next: IframeOptionState) => { iframeOptionRef.current = next; }, []);
+  const onImagesEligibleChange = useCallback((eligible: boolean) => { imagesEligibleRef.current = eligible; }, []);
+
   const preview = usePreviewSession({
     captureModeRef,
+    setCaptureMode,
     previewEnabled,
     setPreviewEnabled,
-    onIframeOptionChange: (next) => { iframeOptionRef.current = next; },
-    onImagesEligibleChange: (eligible) => { imagesEligibleRef.current = eligible; },
+    onIframeOptionChange,
+    onImagesEligibleChange,
   });
   const { iframeOption, imagesEligible, previewWarning, togglePreview, toggleCaptureFullPage, toggleIncludeIframes } = preview;
 
@@ -68,13 +75,6 @@ export function App() {
 
   const toggleAutoDownload = (e: Event) => {
     setAutoDownload((e.target as HTMLInputElement).checked);
-  };
-
-  const toggleCaptureFullPageWrapped = (e: Event) => {
-    // The preview hook owns the session side effects and writes the shared
-    // capture-mode ref; keep the state in sync for the footer checkbox.
-    toggleCaptureFullPage(e);
-    setCaptureMode(captureModeRef.current);
   };
 
   const ensureImagePermission = async (): Promise<boolean> => {
@@ -152,7 +152,7 @@ export function App() {
         previewEnabled={previewEnabled}
         togglePreview={togglePreview}
         captureFullPage={captureMode === 'full-page'}
-        toggleCaptureFullPage={toggleCaptureFullPageWrapped}
+        toggleCaptureFullPage={toggleCaptureFullPage}
         iframeEligible={iframeOption.eligible}
         includeIframes={isIframeIncluded(iframeOption)}
         toggleIncludeIframes={toggleIncludeIframes}
