@@ -1,9 +1,6 @@
 import { hasOrdinaryText } from '../shared/dom-traversal';
-import {
-    sanitizeVisibleContent,
-    type ExtractionOptions,
-    type InitialExtractionResult,
-} from '../extraction/extractor';
+import { sanitizeVisibleContent } from '../extraction/sanitize';
+import type { ExtractionOptions, InitialExtractionResult } from '../extraction/extractor';
 import type { CaptureMode } from '../shared/preview-protocol';
 
 /**
