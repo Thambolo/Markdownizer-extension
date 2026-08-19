@@ -56,7 +56,7 @@ describe('Skeleton golden corpus', () => {
         expect(values).not.toContain('label: "get/pets"'); // button no longer serialized as control
         expect(html).toContain('<dl>'); // schema definition list
         expect(html).toContain('language-json'); // json viewer → fenced code
-        expect(values).not.toContain('Sidebar menu'); // .menu-content chrome removed
+        expect(values).not.toContain('Sidebar menu items'); // .menu-content nav text removed by removeChrome before tokenization
     });
 
     it('full round trip: token lookup by value and local rehydration', () => {
