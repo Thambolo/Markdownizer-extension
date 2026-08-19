@@ -2,6 +2,8 @@
  * Iframe capture helpers for deterministic eligibility and expansion.
  */
 
+import { hasOrdinaryText } from '../shared/dom-traversal';
+
 export const IFRAME_MAX_DEPTH = 3;
 export const IFRAME_MAX_COUNT = 20;
 
@@ -163,25 +165,6 @@ export function hasEligibleIframesInRoot(
 // ── Lightweight eligibility (no cloneNode / recoverGeneratedText / skeletonize) ─
 
 const NON_CONTENT_ELEMENTS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
-
-/**
- * Return true when the given element has ordinary non-whitespace text content,
- * skipping non-content elements. Uses a TreeWalker for efficiency.
- */
-function hasOrdinaryText(root: Node): boolean {
-    const doc = root.ownerDocument ?? document;
-    const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-        if (node.textContent?.trim()) {
-            const parent = node.parentElement;
-            if (parent && !NON_CONTENT_ELEMENTS.has(parent.tagName)) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
 
 /**
  * Check pseudo-element content for recoverable generated text.

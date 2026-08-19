@@ -1,6 +1,7 @@
 import { Readability } from './readability.js';
 import { recoverGeneratedText } from '../skeleton/generated-text.js';
 import { serializeNativeControls } from '../skeleton/native-controls';
+import { hasOrdinaryText } from '../shared/dom-traversal';
 import type { CaptureMode } from '../shared/preview-protocol.js';
 import type { CodeMirrorDocumentCapture } from './codemirror-bridge';
 import {
@@ -192,19 +193,8 @@ export function selectCaptureRoot(mode: CaptureMode): HTMLElement | null {
         document.querySelector<HTMLElement>('main'),
         document.querySelector<HTMLElement>('[role="main"]'),
     ];
-    return candidates.find((candidate) => candidate && hasOrdinaryCaptureText(candidate))
+    return candidates.find((candidate) => candidate && hasOrdinaryText(candidate))
         ?? document.body;
-}
-
-function hasOrdinaryCaptureText(root: HTMLElement): boolean {
-    const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-        const parent = node.parentElement;
-        if (parent?.closest('script,style,noscript,template')) continue;
-        if (node.textContent?.trim()) return true;
-    }
-    return false;
 }
 
 /**

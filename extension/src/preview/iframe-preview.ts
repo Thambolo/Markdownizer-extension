@@ -4,25 +4,16 @@ import {
     readSameOriginFrame,
 } from '../extraction/iframe-capture';
 import { LOADING_HIGHLIGHT_NAME, READY_HIGHLIGHT_NAME } from './preview-highlights';
+import { HighlightConstructor, HighlightRegistry, HighlightService } from './highlight-service';
+import { collectVisibleTextRanges } from '../shared/dom-traversal';
 
 const PREVIEW_STYLE_ATTRIBUTE = 'data-markdownizer-iframe-preview-style';
-const EXCLUDED_ANCESTORS = 'script,style,noscript,template';
-const BOXED_ANCESTORS = 'button,input,select,textarea';
-const SHOW_TEXT = 4;
-
-interface HighlightRegistry {
-    set(name: string, value: unknown): void;
-    delete(name: string): void;
-}
-
-type HighlightConstructor = new (...ranges: Range[]) => unknown;
 
 export interface FrameContext {
     iframe: HTMLIFrameElement;
     document: Document;
     root: HTMLElement;
-    registry: HighlightRegistry | null;
-    Highlight: HighlightConstructor | null;
+    highlights: HighlightService;
     style: HTMLStyleElement | null;
     observer: MutationObserver | null;
     loadHandler: (event: Event) => void;
@@ -43,49 +34,6 @@ function getFrameHighlightAPI(doc: Document): {
         registry: view?.CSS?.highlights ?? null,
         Highlight: view?.Highlight ?? null,
     };
-}
-
-function isHidden(element: Element, boundary: Element, view: Window): boolean {
-    for (let current: Element | null = element; current && current !== boundary; current = current.parentElement) {
-        if (current.hasAttribute('hidden')) return true;
-        const style = view.getComputedStyle(current);
-        if (style.display === 'none') return true;
-        if (style.visibility === 'hidden' || style.visibility === 'collapse') return true;
-        if (parseFloat(style.opacity) === 0) return true;
-    }
-    return false;
-}
-
-function collectVisibleTextRanges(root: HTMLElement): Range[] {
-    const ownerDocument = root.ownerDocument;
-    const view = ownerDocument.defaultView;
-    if (!view) return [];
-
-    const ranges: Range[] = [];
-    const walker = ownerDocument.createTreeWalker(root, SHOW_TEXT, {
-        acceptNode(node) {
-            const text = node.textContent;
-            const parent = node.parentElement;
-            if (!text?.trim() || !parent) return NodeFilter.FILTER_REJECT;
-            if (parent.closest(EXCLUDED_ANCESTORS) || parent.closest(BOXED_ANCESTORS)) return NodeFilter.FILTER_REJECT;
-            if (isHidden(parent, root, view)) return NodeFilter.FILTER_REJECT;
-            return NodeFilter.FILTER_ACCEPT;
-        },
-    });
-
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-        const range = ownerDocument.createRange();
-        range.selectNodeContents(node);
-        try {
-            if (Array.from(range.getClientRects()).some((rect) => rect.width > 0 && rect.height > 0)) {
-                ranges.push(range);
-            }
-        } catch {
-            // A frame can navigate while ranges are being collected.
-        }
-    }
-    return ranges;
 }
 
 export class IframeTextPreview {
@@ -195,8 +143,12 @@ export class IframeTextPreview {
             iframe,
             document: doc,
             root,
-            registry: api.registry,
-            Highlight: api.Highlight,
+            highlights: new HighlightService(
+                api.registry,
+                api.Highlight,
+                READY_HIGHLIGHT_NAME,
+                LOADING_HIGHLIGHT_NAME,
+            ),
             style: null,
             observer: null,
             loadHandler: () => undefined,
@@ -255,14 +207,7 @@ export class IframeTextPreview {
     }
 
     private updateContextHighlight(context: FrameContext): void {
-        context.registry?.delete(READY_HIGHLIGHT_NAME);
-        context.registry?.delete(LOADING_HIGHLIGHT_NAME);
-        if (!context.registry || !context.Highlight) return;
-        const highlight = new context.Highlight(...context.ranges);
-        context.registry.set(
-            this.state === 'loading' ? LOADING_HIGHLIGHT_NAME : READY_HIGHLIGHT_NAME,
-            highlight,
-        );
+        context.highlights.setState(this.state, context.ranges);
     }
 
     /**
@@ -313,8 +258,7 @@ export class IframeTextPreview {
     }
 
     private destroyContext(context: FrameContext): void {
-        context.registry?.delete(READY_HIGHLIGHT_NAME);
-        context.registry?.delete(LOADING_HIGHLIGHT_NAME);
+        context.highlights.clear();
         context.observer?.disconnect();
         context.iframe.removeEventListener('load', context.loadHandler, true);
         if (context._filteredLoadHandler) {
