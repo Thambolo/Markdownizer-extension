@@ -1,5 +1,6 @@
-// logic.ts - Shared logic for the extension
+// skeletonizer.ts - Shared logic for the extension
 
+import { createSkeletonPipeline } from './pipeline';
 import { normalizeRenderedReDoc } from './redoc-normalizer';
 import { recoverGeneratedText } from './generated-text';
 import { serializeNativeControls } from './native-controls';
@@ -30,16 +31,31 @@ export function skeletonize(root: HTMLElement): { html: string, tokens: TokenMap
     return new Skeletonizer().process(root);
 }
 
+// Shared transform sequence. Pipeline order is a deliberate contract:
+// normalizeRenderedReDoc runs BEFORE serializeNativeControls so ReDoc
+// operation buttons are normalized into semantic headings + server links
+// instead of mdz-control markers (P4 fix). The order is locked by
+// tests/skeleton-pipeline.test.ts + the redoc golden test.
+//
+// Wiring note: every SkeletonTransform receives (root, clone). The
+// transform modules that only mutate the element they are passed
+// (normalizeRenderedReDoc, compactSkeleton) are wrapped here so they
+// operate on the CLONE — passing the bare module references would hand
+// them the live source root instead and mutate the live page.
+const SKELETON_PIPELINE = createSkeletonPipeline([
+    recoverGeneratedText,
+    (_root: HTMLElement, clone: HTMLElement) => { normalizeRenderedReDoc(clone); },
+    serializeNativeControls,
+    (_root: HTMLElement, clone: HTMLElement) => { compactSkeleton(clone); },
+]);
+
 class Skeletonizer {
     private tokens: TokenMap = {};
     private counter = 0;
 
     public process(root: HTMLElement): { html: string, tokens: TokenMap } {
         const clone = root.cloneNode(true) as HTMLElement;
-        recoverGeneratedText(root, clone);
-        serializeNativeControls(root, clone);
-        normalizeRenderedReDoc(clone);
-        compactSkeleton(clone);
+        SKELETON_PIPELINE(root, clone);
         const walker = document.createTreeWalker(
             clone,
             NodeFilter.SHOW_TEXT,
