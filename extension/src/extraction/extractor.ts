@@ -1,9 +1,9 @@
 import { Readability } from './readability.js';
 import { recoverGeneratedText } from '../skeleton/generated-text.js';
 import { serializeNativeControls } from '../skeleton/native-controls';
-import { hasOrdinaryText } from '../shared/dom-traversal';
 import type { CaptureMode } from '../shared/preview-protocol.js';
 import type { CodeMirrorDocumentCapture } from './codemirror-bridge';
+import { getCaptureStrategy } from '../content/strategies';
 import {
     bodyRelativePath,
     createIframeBudget,
@@ -13,9 +13,13 @@ import {
     type IframeSanitizer,
 } from './iframe-capture';
 
+export { getBestContent, getVisibleBodyContent } from '../content/strategies';
+
 /**
- * Extractor Strategy Module
- * Priority: Semantic HTML > visible body > Readability (Fallback)
+ * Extractor Module
+ * Priority: capture strategies (content/strategies.ts) do Semantic HTML >
+ * visible body; Readability remains the fallback used by the conversion
+ * pipeline for oversized smart-mode extractions.
  */
 
 export interface ExtractionResult {
@@ -52,41 +56,7 @@ export function getReadabilityContent(): ExtractionResult | null {
     return { element, strategy: 'readability' };
 }
 
-export function getBestContent(options: ExtractionOptions = {}): InitialExtractionResult | null {
-    const semanticSources = [
-        document.querySelector<HTMLElement>('article'),
-        document.querySelector<HTMLElement>('main'),
-        document.querySelector<HTMLElement>('[role="main"]')
-    ];
-
-    for (const semanticSource of semanticSources) {
-        if (!semanticSource) continue;
-        const semanticContent = sanitizeVisibleContent(semanticSource, options);
-        if (semanticContent) {
-            return {
-                element: semanticContent,
-                sourceElement: semanticSource,
-                strategy: 'semantic-html'
-            };
-        }
-    }
-
-    return getVisibleBodyContent(document.body, options);
-}
-
-export function getVisibleBodyContent(
-    sourceRoot: HTMLElement = document.body,
-    options: ExtractionOptions = {},
-): InitialExtractionResult | null {
-    if (!sourceRoot) return null;
-
-    const body = sanitizeVisibleContent(sourceRoot, options);
-    return body
-        ? { element: body, sourceElement: sourceRoot, strategy: 'visible-body' }
-        : null;
-}
-
-function sanitizeVisibleContent(
+export function sanitizeVisibleContent(
     sourceRoot: HTMLElement,
     options: ExtractionOptions = {},
     budget: IframeBudget = createIframeBudget(),
@@ -181,20 +151,11 @@ export function getContentForMode(
     mode: CaptureMode,
     options: ExtractionOptions = {},
 ): InitialExtractionResult | null {
-    return mode === 'full-page'
-        ? getVisibleBodyContent(document.body, options)
-        : getBestContent(options);
+    return getCaptureStrategy(mode).extract(options);
 }
 
 export function selectCaptureRoot(mode: CaptureMode): HTMLElement | null {
-    if (mode === 'full-page') return document.body;
-    const candidates = [
-        document.querySelector<HTMLElement>('article'),
-        document.querySelector<HTMLElement>('main'),
-        document.querySelector<HTMLElement>('[role="main"]'),
-    ];
-    return candidates.find((candidate) => candidate && hasOrdinaryText(candidate))
-        ?? document.body;
+    return getCaptureStrategy(mode).selectRoot();
 }
 
 /**

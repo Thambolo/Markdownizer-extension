@@ -1,13 +1,10 @@
 import '../preview/content-preview.css';
-import { getContentForMode, getReadabilityContent, selectCaptureRoot } from '../extraction/extractor';
 import {
     hasEligibleIframesLightweight,
     hasImagesInRoot,
     readSameOriginFrame,
     IFRAME_MAX_COUNT,
 } from '../extraction/iframe-capture';
-import { skeletonize, rehydrateMarkdown } from '../skeleton/skeletonizer';
-import { shouldUseReadability } from './payload';
 import { ContentPreview, CONTENT_PREVIEW_HOST_ATTRIBUTE } from '../preview/content-preview';
 import {
     PREVIEW_PORT_NAME,
@@ -17,13 +14,8 @@ import {
 } from '../shared/preview-protocol';
 import { dispatchMessage, registerMessageHandler } from '../shared/messages';
 import type { ConvertPageMessage } from '../shared/messages';
-import type { CodeMirrorDocumentCapture } from '../extraction/codemirror-bridge';
-
-interface BackgroundConversionResponse {
-    success: boolean;
-    markdown_skeleton?: string;
-    error?: string;
-}
+import { processPage } from './conversion-pipeline';
+import { getCaptureStrategy } from './strategies';
 
 // ── Preview Protocol ──────────────────────────────────────────────────────────
 
@@ -66,7 +58,7 @@ chrome.runtime.onConnect.addListener((port) => {
         // Reject stale generation inspections
         if (latestInspection.generation < acceptedInspectionGeneration) return;
         // Use lightweight eligibility — never call getContentForMode
-        const root = cachedRoot ?? selectCaptureRoot(latestInspection.captureMode);
+        const root = cachedRoot ?? getCaptureStrategy(latestInspection.captureMode).selectRoot();
         if (!root) return;
         const response: PreviewEligibilityMessage = {
             type: 'preview:eligibility',
@@ -238,7 +230,7 @@ chrome.runtime.onConnect.addListener((port) => {
         switch (cmd.type) {
             case 'preview:show': {
                 const captureMode = normalizeCaptureMode(cmd.captureMode);
-                const root = selectCaptureRoot(captureMode);
+                const root = getCaptureStrategy(captureMode).selectRoot();
                 if (!root) {
                     port.postMessage({
                         success: false,
@@ -265,7 +257,7 @@ chrome.runtime.onConnect.addListener((port) => {
                     includeIframes: normalizeIncludeIframes(cmd.includeIframes),
                 };
                 // Cache the live root from selectCaptureRoot — never derive via getContentForMode
-                const newRoot = selectCaptureRoot(captureMode);
+                const newRoot = getCaptureStrategy(captureMode).selectRoot();
                 if (newRoot !== cachedRoot) {
                     // Root changed — tear down old watcher, set up new one
                     stopEligibilityWatcher();
@@ -338,65 +330,3 @@ registerMessageHandler('convert_page', (request, _sender, sendResponse) => {
  * Main Entry Point: Listen for messages from the popup
  */
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => dispatchMessage(request, sender, sendResponse));
-
-async function requestCodeMirrorCapture(): Promise<CodeMirrorDocumentCapture | null> {
-    try {
-        const response = await chrome.runtime.sendMessage({ action: 'read_codemirror_capture' });
-        if (response?.success && response.capture) {
-            return response.capture as CodeMirrorDocumentCapture;
-        }
-    } catch {
-        // Service worker unavailable or execution failed — fall back gracefully
-    }
-    return null;
-}
-
-async function processPage(captureMode: CaptureMode, includeIframes = false) {
-    let codeMirrorCapture: CodeMirrorDocumentCapture | null = null;
-    // Capture page-owned editor models when needed. Iframe inclusion is
-    // required to discover editors inside frames; the direct selector covers
-    // editors in the main document without adding a bridge call for ordinary pages.
-    if (includeIframes || document.querySelector('.CodeMirror')) {
-        codeMirrorCapture = await requestCodeMirrorCapture();
-    }
-
-    let extraction = getContentForMode(captureMode, { includeIframes, codeMirrorCapture: codeMirrorCapture ?? undefined });
-    if (!extraction) throw new Error('Could not find visible page content.');
-
-    let skeleton = skeletonize(extraction.element);
-    if (includeIframes && shouldUseReadability(skeleton.html)) {
-        throw new Error('The page and included iframe content are too large to convert. Turn off Include iframes and try again.');
-    }
-    if (shouldUseReadability(skeleton.html) && captureMode === 'full-page') {
-        throw new Error('The full page is too large to convert. Turn off Capture full page to use Smart selection.');
-    }
-
-    if (shouldUseReadability(skeleton.html) && captureMode === 'smart') {
-        extraction = getReadabilityContent();
-        if (!extraction) throw new Error('Could not reduce page content to the supported size.');
-        skeleton = skeletonize(extraction.element);
-    }
-
-    if (captureMode === 'smart' && shouldUseReadability(skeleton.html)) {
-        throw new Error('This page is too large to convert.');
-    }
-
-    const { html, tokens } = skeleton;
-    const response: BackgroundConversionResponse = await chrome.runtime.sendMessage({
-        action: "convert_skeleton",
-        payload: {
-            html_skeleton: html,
-            url: window.location.href,
-            client_type: "extension",
-            extraction_strategy: extraction.strategy
-        }
-    });
-
-    if (!response?.success || !response.markdown_skeleton) {
-        throw new Error(response?.error || "Could not convert page.");
-    }
-
-    const markdown = rehydrateMarkdown(response.markdown_skeleton, tokens);
-
-    return { success: true, markdown };
-}
