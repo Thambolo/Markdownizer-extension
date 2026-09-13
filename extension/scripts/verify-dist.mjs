@@ -67,8 +67,8 @@ if (!swEntry) {
 //    import() is disallowed on ServiceWorkerGlobalScope, and a static import
 //    would bloat the SW with the remark stack.
 const swSrc = readFileSync(join(distDir, swEntry.file), 'utf8');
-if (swSrc.includes('zip-build-service')) {
-  errors.push('background chunk references zip-build-service (must stay out of the SW)');
+if (swSrc.includes('build-service')) {
+  errors.push('background chunk references build-service (must stay out of the SW)');
 }
 
 // 4. The popup HTML must not emit modulepreload links.

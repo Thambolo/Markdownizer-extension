@@ -1,0 +1,10 @@
+{
+  "extensionName": {
+    "message": "HTML을 Markdown으로 변환 - Markdownizer",
+    "description": "Extension name (max 75 chars)"
+  },
+  "extensionDescription": {
+    "message": "웹페이지를 ChatGPT, Claude, Gemini용 Markdown으로 변환. HTML을 Markdown으로, 표·코드·링크 보존 — 프라이버시 우선.",
+    "description": "Chrome Web Store short description (max 132 chars)"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "extensionName": {
+    "message": "HTML转Markdown转换器 - Markdownizer",
+    "description": "Extension name (max 75 chars)"
+  },
+  "extensionDescription": {
+    "message": "将网页转换为Markdown，用于ChatGPT、Claude和Gemini。HTML转Markdown，保留表格、代码和链接——隐私优先。",
+    "description": "Chrome Web Store short description (max 132 chars)"
+  }
+}

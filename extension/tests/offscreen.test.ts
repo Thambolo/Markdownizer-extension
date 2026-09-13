@@ -62,7 +62,7 @@ afterEach(() => {
 
 describe('offscreen document handler', () => {
     async function load() {
-        await import('../src/offscreen');
+        await import('../src/offscreen/index');
     }
 
     function dispatch(payload: Record<string, unknown>): Promise<unknown> {
@@ -112,8 +112,8 @@ describe('offscreen document handler', () => {
     });
 
     it('responds { ok: false } and broadcasts completion on build errors', async () => {
-        vi.doMock('../src/zip-build-service', async (importOriginal) => {
-            const actual = await importOriginal<typeof import('../src/zip-build-service')>();
+        vi.doMock('../src/zip/build-service', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('../src/zip/build-service')>();
             return { ...actual, buildZipResult: vi.fn(async () => { throw new Error('zip exploded'); }) };
         });
         try {
@@ -125,7 +125,7 @@ describe('offscreen document handler', () => {
             expect(broadcasts.some((m) => m.type === 'zip:completed' && m.buildId === 'b-1' && m.ok === false)).toBe(true);
             expect(lastAnchor).toBeNull(); // nothing downloaded on failure
         } finally {
-            vi.doUnmock('../src/zip-build-service');
+            vi.doUnmock('../src/zip/build-service');
         }
     });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { remark } from 'remark';
-import { rehydrateMarkdown, skeletonize } from '../src/logic';
+import { rehydrateMarkdown, skeletonize } from '../src/skeleton/skeletonizer';
 
 interface MarkdownNode { type: string; value?: string; children?: MarkdownNode[]; }
 function nodesOfType(node: MarkdownNode, type: string): MarkdownNode[] {

@@ -5,17 +5,10 @@
 // browser UI thread for large payloads); the service worker only
 // finalizes state and broadcasts.
 
-import { buildZipResult } from './zip-build-service';
-
-interface OffscreenBuildRequest {
-    type: 'offscreen:build';
-    buildId: string;
-    payload: {
-        markdown: string;
-        title: string;
-        sourceUrl: string | null;
-    };
-}
+import { buildZipResult } from '../zip/build-service';
+import { downloadBlob } from '../shared/download';
+import { dispatchMessage, registerMessageHandler } from '../shared/messages';
+import type { OffscreenBuildMessage } from '../shared/messages';
 
 /**
  * Download bytes as a file via a blob URL + anchor click. Renderer-side
@@ -27,19 +20,11 @@ interface OffscreenBuildRequest {
  */
 function triggerBlobDownload(bytes: Uint8Array<ArrayBuffer>, downloaded: 'zip' | 'md', filename: string): void {
     const mime = downloaded === 'zip' ? 'application/zip' : 'text/markdown';
-    const blob = new Blob([bytes], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    downloadBlob(new Blob([bytes], { type: mime }), filename, 30_000);
 }
 
-chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
-    const request = message as OffscreenBuildRequest | null;
+registerMessageHandler('offscreen:build', (message, _sender, sendResponse) => {
+    const request = message as OffscreenBuildMessage | null;
     if (!request || typeof request !== 'object' || request.type !== 'offscreen:build') return;
 
     const { buildId, payload } = request;
@@ -92,3 +77,5 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
 
     return true; // async response
 });
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => dispatchMessage(request, sender, sendResponse));

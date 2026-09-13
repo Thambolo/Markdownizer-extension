@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getOrCreateUserID, StorageProvider } from '../src/identity';
+import { getOrCreateUserID, StorageProvider } from '../src/background/identity';
 
 /**
  * Mock Storage Implementation

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { serializeNativeControls } from '../src/native-controls';
+import { serializeNativeControls } from '../src/skeleton/native-controls';
 
 function roots(html: string): { source: HTMLElement, clone: HTMLElement } {
     const dom = new JSDOM(html);

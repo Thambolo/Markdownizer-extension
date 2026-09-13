@@ -1,0 +1,10 @@
+{
+  "extensionName": {
+    "message": "Convertisseur HTML vers Markdown - Markdownizer",
+    "description": "Extension name (max 75 chars)"
+  },
+  "extensionDescription": {
+    "message": "Convertissez une page web en Markdown pour ChatGPT, Claude & Gemini. HTML vers Markdown, tableaux, code et liens — confidentialité.",
+    "description": "Chrome Web Store short description (max 132 chars)"
+  }
+}

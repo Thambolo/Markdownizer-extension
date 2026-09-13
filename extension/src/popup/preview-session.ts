@@ -2,7 +2,8 @@ import {
     PREVIEW_PORT_NAME,
     type CaptureMode,
     type PreviewEligibilityMessage,
-} from '../preview-protocol';
+} from '../shared/preview-protocol';
+import { waitForContentScript } from './content-script-loader';
 
 // ── Public Types ──────────────────────────────────────────────────────────────
 
@@ -28,57 +29,6 @@ export function isSupportedPageUrl(url?: string): boolean {
     } catch {
         return false;
     }
-}
-
-// ── Content-Script Readiness ─────────────────────────────────────────────────
-
-const RETRY_INTERVAL_MS = 200;
-const MAX_RETRIES = 5;
-
-export async function injectContentScript(tabId: number): Promise<void> {
-    const contentScript = chrome.runtime.getManifest().content_scripts?.[0];
-    const contentScriptFile = contentScript?.js?.[0];
-
-    if (!contentScriptFile) {
-        throw new Error('Content script configuration missing in manifest');
-    }
-
-    const contentStyleFile = contentScript?.css?.[0];
-    if (contentStyleFile) {
-        await chrome.scripting.insertCSS({
-            target: { tabId },
-            files: [contentStyleFile],
-        });
-    }
-
-    await chrome.scripting.executeScript({
-        target: { tabId },
-        files: [contentScriptFile],
-    });
-}
-
-async function waitForContentScript(tabId: number): Promise<void> {
-    try {
-        await chrome.tabs.sendMessage(tabId, { action: 'preview_ready' });
-        return; // Content script already loaded
-    } catch {
-        // Content script not present — inject and retry
-    }
-
-    await injectContentScript(tabId);
-
-    let lastError: unknown;
-    for (let i = 0; i < MAX_RETRIES; i++) {
-        await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL_MS));
-        try {
-            await chrome.tabs.sendMessage(tabId, { action: 'preview_ready' });
-            return;
-        } catch (err) {
-            lastError = err;
-        }
-    }
-
-    throw lastError || new Error('Failed to establish connection to content script');
 }
 
 // ── Session Factory ──────────────────────────────────────────────────────────

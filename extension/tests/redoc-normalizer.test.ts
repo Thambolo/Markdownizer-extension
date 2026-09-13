@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { normalizeRenderedReDoc } from '../src/redoc-normalizer';
+import { normalizeRenderedReDoc } from '../src/skeleton/redoc-normalizer';
 
 function rootFrom(html: string): HTMLElement {
     const dom = new JSDOM(html);

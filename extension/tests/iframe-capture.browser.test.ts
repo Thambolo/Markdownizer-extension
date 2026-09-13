@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { getVisibleBodyContent } from '../src/extractor';
-import { hasImagesInRoot } from '../src/iframe-capture';
+import { getVisibleBodyContent } from '../src/extraction/extractor';
+import { hasImagesInRoot } from '../src/extraction/iframe-capture';
 
 afterEach(() => {
     document.body.replaceChildren();

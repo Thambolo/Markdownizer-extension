@@ -1,0 +1,10 @@
+{
+  "extensionName": {
+    "message": "Chuyển HTML sang Markdown - Markdownizer",
+    "description": "Extension name (max 75 chars)"
+  },
+  "extensionDescription": {
+    "message": "Chuyển trang web thành Markdown cho ChatGPT, Claude và Gemini. HTML sang Markdown, giữ bảng, mã và liên kết — quyền riêng tư.",
+    "description": "Chrome Web Store short description (max 132 chars)"
+  }
+}

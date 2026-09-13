@@ -1,32 +1,10 @@
 import { LOADING_HIGHLIGHT_NAME, READY_HIGHLIGHT_NAME } from './preview-highlights';
+import { HighlightService, getHighlightConstructor, getHighlightRegistry } from './highlight-service';
+import { BOXED_ANCESTORS, collectVisibleTextRanges, hasNonEmptyRect } from '../shared/dom-traversal';
 import { IframeTextPreview } from './iframe-preview';
 
 export const CONTENT_PREVIEW_HOST_ATTRIBUTE = 'data-markdownizer-content-preview-host';
 export { LOADING_HIGHLIGHT_NAME, READY_HIGHLIGHT_NAME } from './preview-highlights';
-
-/**
- * Minimal structural interface for the CSS Custom Highlight registry.
- * Avoids dependency on a DOM lib type that may not exist yet.
- */
-/* eslint-disable @typescript-eslint/no-explicit-any */
-interface HighlightRegistry {
-    set(name: string, highlight: any): void;
-    delete(name: string): void;
-    has(name: string): boolean;
-}
-/* eslint-enable @typescript-eslint/no-explicit-any */
-
-/**
- * Return the CSS highlight registry if the API is available, null otherwise.
- * Guards against environments where CSS.highlights or Highlight is missing.
- */
-function getHighlightRegistry(): HighlightRegistry | null {
-    if (typeof CSS === 'undefined' || !('highlights' in CSS) || typeof Highlight === 'undefined') {
-        return null;
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (CSS as any).highlights as HighlightRegistry;
-}
 
 /**
  * ContentPreview manages the lifecycle of CSS Custom Highlight overlays
@@ -37,6 +15,12 @@ export class ContentPreview {
     private textRanges: Range[] = [];
     private boxedElements: HTMLElement[] = [];
     private state: 'ready' | 'loading' = 'ready';
+    private highlights = new HighlightService(
+        getHighlightRegistry(),
+        getHighlightConstructor(),
+        READY_HIGHLIGHT_NAME,
+        LOADING_HIGHLIGHT_NAME,
+    );
 
     // ── Host overlay state ──────────────────────────────────────────────────
     private host: HTMLElement | null = null;
@@ -68,11 +52,7 @@ export class ContentPreview {
         this.boxedElements = targets.boxedElements;
         this.state = 'ready';
 
-        const registry = getHighlightRegistry();
-        if (registry) {
-            const highlight = new Highlight(...this.textRanges);
-            registry.set(READY_HIGHLIGHT_NAME, highlight);
-        }
+        this.highlights.setState('ready', this.textRanges);
 
         // Create host overlay only when boxed elements exist
         if (this.boxedElements.length > 0) {
@@ -92,13 +72,7 @@ export class ContentPreview {
      */
     setLoading(): void {
         this.state = 'loading';
-        const registry = getHighlightRegistry();
-        if (registry) {
-            registry.delete(READY_HIGHLIGHT_NAME);
-            registry.delete(LOADING_HIGHLIGHT_NAME);
-            const highlight = new Highlight(...this.textRanges);
-            registry.set(LOADING_HIGHLIGHT_NAME, highlight);
-        }
+        this.highlights.setState('loading', this.textRanges);
         if (this.host) {
             this.host.setAttribute('data-preview-state', 'loading');
         }
@@ -111,13 +85,7 @@ export class ContentPreview {
      */
     setReady(): void {
         this.state = 'ready';
-        const registry = getHighlightRegistry();
-        if (registry) {
-            registry.delete(READY_HIGHLIGHT_NAME);
-            registry.delete(LOADING_HIGHLIGHT_NAME);
-            const highlight = new Highlight(...this.textRanges);
-            registry.set(READY_HIGHLIGHT_NAME, highlight);
-        }
+        this.highlights.setState('ready', this.textRanges);
         if (this.host) {
             this.host.setAttribute('data-preview-state', 'ready');
         }
@@ -140,11 +108,7 @@ export class ContentPreview {
      * Safe to call at any time.
      */
     remove(): void {
-        const registry = getHighlightRegistry();
-        if (registry) {
-            registry.delete(READY_HIGHLIGHT_NAME);
-            registry.delete(LOADING_HIGHLIGHT_NAME);
-        }
+        this.highlights.clear();
         this.stopObserving();
         this.removeHost();
         this.iframePreview.remove();
@@ -220,17 +184,7 @@ export class ContentPreview {
         this.boxedElements = targets.boxedElements;
 
         // Re-register current state in the highlight registry
-        const registry = getHighlightRegistry();
-        if (registry) {
-            registry.delete(READY_HIGHLIGHT_NAME);
-            registry.delete(LOADING_HIGHLIGHT_NAME);
-            const highlight = new Highlight(...this.textRanges);
-            if (this.state === 'loading') {
-                registry.set(LOADING_HIGHLIGHT_NAME, highlight);
-            } else {
-                registry.set(READY_HIGHLIGHT_NAME, highlight);
-            }
-        }
+        this.highlights.setState(this.state, this.textRanges);
 
         // Reconnect ResizeObserver targets
         if (this.resizeObserver) {
@@ -414,9 +368,7 @@ const HOST_STYLES = `
 }
 `;
 
-const EXCLUDED_TEXT_ANCESTORS = 'script,style,noscript,template';
 const BOXED_SELECTOR = 'img,button,input:not([type="hidden"]),select,textarea';
-const BOXED_ANCESTORS = 'button,input,select,textarea';
 
 export interface ContentPreviewTargets {
     textRanges: Range[];
@@ -424,94 +376,27 @@ export interface ContentPreviewTargets {
 }
 
 /**
- * Check if an element is effectively hidden, either by its own styles/attributes
- * or by any ancestor up to (but not including) the root boundary.
- * Returns true if the element or any ancestor has:
- * - `hidden` attribute
- * - `display: none`
- * - `visibility: hidden` or `visibility: collapse`
- * - `opacity: 0`
- */
-function isElementHidden(el: Element, boundary: Element, view: Window): boolean {
-    let current: Element | null = el;
-    while (current && current !== boundary) {
-        if (current.hasAttribute('hidden')) return true;
-        const style = view.getComputedStyle(current);
-        if (style.display === 'none') return true;
-        if (style.visibility === 'hidden' || style.visibility === 'collapse') return true;
-        if (parseFloat(style.opacity) === 0) return true;
-        current = current.parentElement;
-    }
-    return false;
-}
-
-/**
- * Check if a DOMRectList or DOMRect[] contains at least one non-empty rect
- * (width > 0 and height > 0).
- */
-function hasNonEmptyRect(rects: DOMRectList | DOMRect[]): boolean {
-    for (let i = 0; i < rects.length; i++) {
-        const rect = rects[i];
-        if (rect.width > 0 && rect.height > 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/**
  * Collect all visible text ranges and boxed interactive/media elements
  * within the given root element.
  *
- * - Text nodes in excluded ancestors (script, style, noscript, template) are skipped.
- * - Text nodes inside boxed ancestors (button, input, select, textarea) are skipped
- *   to avoid duplication.
+ * - Text ranges come from the shared visible-text walker (skipping excluded and
+ *   boxed ancestors, hidden elements, and zero-rect text).
  * - Boxed elements are those matching img, button, input (except hidden), select,
  *   textarea that have visible geometry and are not hidden via style/attribute.
  */
 export function collectContentPreviewTargets(root: HTMLElement): ContentPreviewTargets {
-    const textRanges: Range[] = [];
+    const textRanges = collectVisibleTextRanges(root);
+    const boxedElements = collectBoxedElements(root);
+    return { textRanges, boxedElements };
+}
+
+/**
+ * Collect the visible boxed interactive/media elements within the given root.
+ */
+function collectBoxedElements(root: HTMLElement): HTMLElement[] {
     const boxedElements: HTMLElement[] = [];
     const ownerDocument = root.ownerDocument;
     const view = ownerDocument.defaultView ?? window;
-
-    // ── Collect visible text ranges ───────────────────────────────────────────
-    const walker = ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-        acceptNode(node) {
-            // Skip empty/whitespace-only text
-            const text = node.textContent;
-            if (!text || text.trim().length === 0) {
-                return NodeFilter.FILTER_REJECT;
-            }
-            const parent = node.parentElement;
-            if (!parent) {
-                return NodeFilter.FILTER_REJECT;
-            }
-            // Skip text inside excluded ancestors
-            if (parent.closest(EXCLUDED_TEXT_ANCESTORS)) {
-                return NodeFilter.FILTER_REJECT;
-            }
-            // Skip text inside boxed ancestors (button, input, select, textarea)
-            if (parent.closest(BOXED_ANCESTORS)) {
-                return NodeFilter.FILTER_REJECT;
-            }
-            // Skip text in hidden elements (hidden attr, display:none, visibility:hidden/collapse, opacity:0)
-            if (isElementHidden(parent, root, view)) {
-                return NodeFilter.FILTER_REJECT;
-            }
-            return NodeFilter.FILTER_ACCEPT;
-        },
-    });
-
-    let textNode: Text | null;
-    while ((textNode = walker.nextNode() as Text | null)) {
-        const range = ownerDocument.createRange();
-        range.selectNodeContents(textNode);
-        const rects = range.getClientRects();
-        if (hasNonEmptyRect(rects)) {
-            textRanges.push(range);
-        }
-    }
 
     // ── Collect boxed elements ────────────────────────────────────────────────
     // Include root itself if it matches
@@ -556,5 +441,5 @@ export function collectContentPreviewTargets(root: HTMLElement): ContentPreviewT
         }
     }
 
-    return { textRanges, boxedElements };
+    return boxedElements;
 }

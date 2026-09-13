@@ -1,0 +1,10 @@
+{
+  "extensionName": {
+    "message": "HTML'den Markdown'a Dönüştürücü - Markdownizer",
+    "description": "Extension name (max 75 chars)"
+  },
+  "extensionDescription": {
+    "message": "Sayfayı ChatGPT, Claude ve Gemini için Markdown'a çevirin. HTML'den Markdown'a, tablolar, kod, bağlantılar — gizlilik öncelikli.",
+    "description": "Chrome Web Store short description (max 132 chars)"
+  }
+}

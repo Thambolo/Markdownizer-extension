@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { getBestContent, getReadabilityContent, getVisibleBodyContent } from '../src/extractor';
-import { skeletonize } from '../src/logic';
+import { getBestContent, getReadabilityContent, getVisibleBodyContent } from '../src/extraction/extractor';
+import { skeletonize } from '../src/skeleton/skeletonizer';
 
 afterEach(() => document.body.replaceChildren());
 

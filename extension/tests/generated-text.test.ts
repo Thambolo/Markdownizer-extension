@@ -4,7 +4,7 @@ import {
     type ComputedStyleReader,
     parseGeneratedContent,
     recoverGeneratedText,
-} from '../src/generated-text';
+} from '../src/skeleton/generated-text';
 
 function roots(html: string): { source: HTMLElement; clone: HTMLElement } {
     const dom = new JSDOM(html);

@@ -31,7 +31,7 @@ describe('bodyRelativePath (via collectCodeMirrorCaptureInMainWorld)', () => {
         });
 
         // Dynamic import to get the module after DOM setup
-        return import('../src/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
+        return import('../src/extraction/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
             const capture = collectCodeMirrorCaptureInMainWorld();
             expect(capture.editors).toHaveLength(1);
             expect(capture.editors[0].path).toEqual([0]);
@@ -47,7 +47,7 @@ describe('bodyRelativePath (via collectCodeMirrorCaptureInMainWorld)', () => {
             value: { getValue: () => 'deep value' },
         });
 
-        return import('../src/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
+        return import('../src/extraction/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
             const capture = collectCodeMirrorCaptureInMainWorld();
             expect(capture.editors).toHaveLength(1);
             expect(capture.editors[0].path).toEqual([0, 0, 0]);
@@ -73,7 +73,7 @@ describe('collectCodeMirrorCaptureInMainWorld', () => {
             value: { getValue: () => 'line 1\nline 2\nline 3' },
         });
 
-        return import('../src/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
+        return import('../src/extraction/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
             const capture = collectCodeMirrorCaptureInMainWorld();
             expect(capture.editors).toHaveLength(1);
             expect(capture.editors[0].value).toBe('line 1\nline 2\nline 3');
@@ -103,7 +103,7 @@ describe('collectCodeMirrorCaptureInMainWorld', () => {
         });
         Object.defineProperty(iframe, 'contentDocument', { configurable: true, get: () => frameDocument });
 
-        return import('../src/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
+        return import('../src/extraction/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
             const capture = collectCodeMirrorCaptureInMainWorld();
             expect(capture.editors).toHaveLength(1);
             expect(capture.editors[0].value).toBe('main editor content');
@@ -130,7 +130,7 @@ describe('collectCodeMirrorCaptureInMainWorld', () => {
             value: { getValue: () => 'good editor' },
         });
 
-        return import('../src/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
+        return import('../src/extraction/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
             const capture = collectCodeMirrorCaptureInMainWorld();
             expect(capture.editors).toHaveLength(1);
             expect(capture.editors[0].value).toBe('good editor');
@@ -145,7 +145,7 @@ describe('collectCodeMirrorCaptureInMainWorld', () => {
             value: { getValue: () => 42 },
         });
 
-        return import('../src/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
+        return import('../src/extraction/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
             const capture = collectCodeMirrorCaptureInMainWorld();
             expect(capture.editors).toHaveLength(0);
         });
@@ -154,7 +154,7 @@ describe('collectCodeMirrorCaptureInMainWorld', () => {
     it('skips a .CodeMirror host without a CodeMirror property', () => {
         setupDOM('<body><div class="CodeMirror"></div></body>');
 
-        return import('../src/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
+        return import('../src/extraction/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
             const capture = collectCodeMirrorCaptureInMainWorld();
             expect(capture.editors).toHaveLength(0);
         });
@@ -163,7 +163,7 @@ describe('collectCodeMirrorCaptureInMainWorld', () => {
     it('returns empty capture when no editors exist', () => {
         setupDOM('<body><p>No editors here</p></body>');
 
-        return import('../src/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
+        return import('../src/extraction/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
             const capture = collectCodeMirrorCaptureInMainWorld();
             expect(capture.editors).toHaveLength(0);
             expect(Object.keys(capture.frames)).toHaveLength(0);
@@ -178,7 +178,7 @@ describe('collectCodeMirrorCaptureInMainWorld', () => {
             get: () => { throw new DOMException('Blocked a frame with origin "null"', 'SecurityError'); },
         });
 
-        return import('../src/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
+        return import('../src/extraction/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
             const capture = collectCodeMirrorCaptureInMainWorld();
             expect(Object.keys(capture.frames)).toHaveLength(0);
         });
@@ -206,7 +206,7 @@ describe('collectCodeMirrorCaptureInMainWorld', () => {
         });
         Object.defineProperty(innerIframe, 'contentDocument', { configurable: true, get: () => innerDoc });
 
-        return import('../src/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
+        return import('../src/extraction/codemirror-bridge').then(({ collectCodeMirrorCaptureInMainWorld }) => {
             const capture = collectCodeMirrorCaptureInMainWorld();
             const outerFrameKey = Object.keys(capture.frames)[0];
             const outerFrameCapture = capture.frames[outerFrameKey];

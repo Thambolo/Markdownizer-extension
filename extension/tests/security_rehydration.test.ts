@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { remark } from 'remark';
 import remarkGfm from 'remark-gfm';
-import { rehydrateMarkdown, skeletonize } from '../src/logic';
+import { rehydrateMarkdown, skeletonize } from '../src/skeleton/skeletonizer';
 
 interface MarkdownNode {
     type: string;
