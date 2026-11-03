@@ -24,6 +24,9 @@ const runner = isIntegration ? describe : describe.skip;
 runner('Full Stack Integration (Frontend <-> Backend)', () => {
     const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8081/convert";
     const TEST_USER_ID = "integration-test-user-id";
+    // Must match an ID in the backend's ALLOWED_EXTENSION_IDS (32 chars, a-p).
+    const TEST_EXTENSION_ID = process.env.MDZ_TEST_EXTENSION_ID || "abcdefghijklmnopabcdefghijklmnop";
+    const TEST_ORIGIN = `chrome-extension://${TEST_EXTENSION_ID}`;
     const isApprovedLocalDevelopmentBackend = API_URL === "http://localhost:8080/convert";
 
     function setupDOM(htmlString: string) {
@@ -58,7 +61,7 @@ runner('Full Stack Integration (Frontend <-> Backend)', () => {
             method: "POST",
             headers: { 
                 "Content-Type": "application/json",
-                "Origin": "chrome-extension://integration-test",
+                "Origin": TEST_ORIGIN,
                 "X-User-ID": TEST_USER_ID
             },
             body: JSON.stringify({ 
@@ -108,7 +111,7 @@ runner('Full Stack Integration (Frontend <-> Backend)', () => {
             method: "POST",
             headers: { 
                 "Content-Type": "application/json",
-                "Origin": "chrome-extension://integration-test",
+                "Origin": TEST_ORIGIN,
                 "X-User-ID": TEST_USER_ID
             },
             body: JSON.stringify({
@@ -144,7 +147,7 @@ runner('Full Stack Integration (Frontend <-> Backend)', () => {
         } else {
             expect(response.status).toBe(403);
             const data = await response.json();
-            expect(data.error).toContain("Invalid Extension ID");
+            expect(data.error).toBe("Unauthorized origin");
         }
     });
 
@@ -153,7 +156,7 @@ runner('Full Stack Integration (Frontend <-> Backend)', () => {
             method: "POST",
             headers: { 
                 "Content-Type": "application/json",
-                "Origin": "chrome-extension://integration-test",
+                "Origin": TEST_ORIGIN,
                 "X-User-ID": TEST_USER_ID
             },
             body: '{ "bad_json": ' 
@@ -174,7 +177,7 @@ runner('Full Stack Integration (Frontend <-> Backend)', () => {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Origin': 'chrome-extension://integration-test',
+                'Origin': TEST_ORIGIN,
                 'X-User-ID': TEST_USER_ID,
             },
             body: JSON.stringify({
@@ -200,7 +203,7 @@ runner('Full Stack Integration (Frontend <-> Backend)', () => {
             method: "POST",
             headers: { 
                 "Content-Type": "application/json",
-                "Origin": "chrome-extension://integration-test",
+                "Origin": TEST_ORIGIN,
                 "X-User-ID": TEST_USER_ID
             },
             body: JSON.stringify({ html_skeleton: hugeHtml })
